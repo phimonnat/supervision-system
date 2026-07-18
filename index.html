@@ -248,7 +248,7 @@ tr:hover td{background:#f9fafb}
 <body>
 
 <div id="toast" class="toast"></div>
-<div id="saving-overlay" class="saving-overlay"><div class="saving-overlay-box"><div class="saving-spinner"></div><span id="saving-overlay-text">กำลังบันทึก...กรุณารอสักครู่ อย่ารีเฟรชหน้าเว็บหรือปิดหน้าจอจนกว่าการบันทึกจะเสร็จสมบูรณ์</span></div></div>
+<div id="saving-overlay" class="saving-overlay"><div class="saving-overlay-box"><div class="saving-spinner"></div><span id="saving-overlay-text">กำลังบันทึก...กรุณารอสักครู่<br>อย่ารีเฟรชหน้าเว็บหรือปิดหน้าจอจนกว่าการบันทึกจะเสร็จสมบูรณ์</span></div></div>
 <div id="loading-overlay" class="loading-overlay show"><div class="spinner"></div><div class="loading-overlay-text" id="loading-overlay-text">กำลังโหลดข้อมูล...</div></div>
 
 <!-- MODAL -->
@@ -1098,13 +1098,23 @@ function refreshSemester(cb) {
   });
 }
 
+// Incremented every time listenToSemester() is called. Used so that if two
+// calls are in flight at once (e.g. the "assumed semester" fetch fired at
+// startup, and a second corrected fetch fired once meta.currentSemesterTerm/
+// Year turns out to be different), whichever response comes back is only
+// applied if it's still the LATEST request -- a slower, stale response from
+// an earlier/superseded call is discarded instead of overwriting the screen
+// with the wrong semester's data.
+var semesterLoadToken = 0;
 function listenToSemester(term, year) {
   if (semesterListenerRef) semesterListenerRef.off();
   var key = semesterKey(term, year);
   var ref = dbRoot.child("semesters").child(key);
   semesterListenerRef = ref;
+  var myToken = ++semesterLoadToken;
   beginLoading("กำลังโหลดข้อมูลภาคเรียน...");
   ref.once("value").then(function(snap) {
+    if (myToken !== semesterLoadToken) { endLoading(); return; } // superseded by a newer request
     var data = snap.val();
     // IMPORTANT: only treat this as a brand-new/never-initialized semester
     // when the whole node is missing (data === null). Previously this also
@@ -1117,6 +1127,7 @@ function listenToSemester(term, year) {
       if (term === 2) {
         var term1Key = semesterKey(1, year);
         dbRoot.child("semesters").child(term1Key).once("value").then(function(snap1) {
+          if (myToken !== semesterLoadToken) { endLoading(); return; } // superseded
           var term1Data = snap1.val();
           var copiedTeachers = (term1Data && fieldLength(term1Data.teachers))
             ? JSON.parse(JSON.stringify(normalizeField(term1Data.teachers)))
@@ -1232,6 +1243,11 @@ function initFirebaseSync() {
 // HELPERS
 // ======================================================
 function uid() { return Math.random().toString(36).slice(2, 9); }
+
+// Monochrome trash-can icon (inherits button text color via currentColor)
+// used instead of the 🗑️ emoji, which renders inconsistently across
+// devices/OS (colorful on some, a missing-glyph box on others).
+var TRASH_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>';
 
 // Fix for a known Chrome/Android bug on Thai-locale devices: the native
 // <input type="date"> picker displays Buddhist Era (พ.ศ.) years but some
@@ -1753,7 +1769,7 @@ function renderRegList(round) {
         if (r.status === "รอดำเนินการ") {
           html += '<button class="btn btn-ghost btn-xs" onclick="confirmReg(\'' + r.id + '\',' + round + ')">&#x2713;</button> ';
         }
-        html += '<button class="btn btn-danger btn-xs" onclick="deleteReg(\'' + r.id + '\',' + round + ')">&#x1F5D1;</button></td>';
+        html += '<button class="btn btn-danger btn-xs" onclick="deleteReg(\'' + r.id + '\',' + round + ')">' + TRASH_ICON_SVG + '</button></td>';
       }
       html += '</tr>';
     });
@@ -2446,7 +2462,7 @@ function renderAdminTeachers() {
   var list = q ? state.teachers.filter(function(t) { return t.name && t.name.toLowerCase().indexOf(q) >= 0; }) : state.teachers;
   list.forEach(function(t, i) {
     html += '<tr><td>' + (i+1) + '</td><td><strong>' + highlightMatch(t.name, q) + '</strong></td><td>' + t.subject + '</td><td>' + t.room + '</td>' +
-      '<td><button class="btn btn-danger btn-xs" onclick="deleteTeacher(\'' + t.id + '\')">&#x1F5D1;</button></td></tr>';
+      '<td><button class="btn btn-danger btn-xs" onclick="deleteTeacher(\'' + t.id + '\')">' + TRASH_ICON_SVG + '</button></td></tr>';
   });
   document.getElementById("admin-teacher-body").innerHTML = html;
   var copyBtn = document.getElementById("copy-teachers-btn");
