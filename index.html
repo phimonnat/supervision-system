@@ -2445,12 +2445,49 @@ function renderAdminTeachers() {
 }
 
 function deleteTeacher(id) {
-  if (!confirm("ลบครูคนนี้ออกจากระบบ?")) return;
+  var t = getTeacher(id);
+  var relatedRegs = state.regs.filter(function(r) { return r.teacherId === id; });
+  var regIds = relatedRegs.map(function(r) { return r.id; });
+  var relatedEvals = state.evals.filter(function(e) { return regIds.indexOf(e.regId) >= 0; });
+  var relatedSubs = (state.submissions || []).filter(function(s) { return s.teacherId === id; });
+  var asSupervisorRegs = state.regs.filter(function(r) { return r.supervisorId === id && r.teacherId !== id; });
+  var totalRelated = relatedRegs.length + relatedEvals.length + relatedSubs.length;
+
+  var html = '<div class="alert alert-warning">คำเตือน: การลบครูจะลบข้อมูลที่ผูกกับครูคนนี้ทั้งหมดแบบถาวร และไม่สามารถกู้คืนได้</div>' +
+    '<div style="font-size:14px;margin-bottom:10px">ยืนยันการลบ <strong>' + escapeHtml(t.name) + '</strong>' + (t.subject ? ' (' + escapeHtml(t.subject) + ')' : '') + ' ออกจากระบบ' +
+    (totalRelated > 0 ? ' พร้อมข้อมูลที่เกี่ยวข้องดังนี้:' : ' — ไม่มีข้อมูลอื่นที่ผูกอยู่') + '</div>' +
+    (totalRelated > 0
+      ? '<ul style="font-size:13px;color:#3d4f70;line-height:1.9;margin:0 0 14px 20px;padding:0">' +
+          '<li>รายการลงทะเบียนนิเทศ: <strong>' + relatedRegs.length + '</strong> รายการ</li>' +
+          '<li>ผลการประเมิน: <strong>' + relatedEvals.length + '</strong> รายการ</li>' +
+          '<li>ไฟล์งานที่ส่ง: <strong>' + relatedSubs.length + '</strong> ไฟล์</li>' +
+        '</ul>'
+      : '') +
+    (asSupervisorRegs.length > 0
+      ? '<div class="alert alert-warning" style="margin-bottom:14px">ครูคนนี้เป็น <strong>ผู้นิเทศ</strong> อยู่ใน <strong>' + asSupervisorRegs.length + '</strong> รายการของครูคนอื่น รายการเหล่านั้นจะยังอยู่ครบ แต่ชื่อผู้นิเทศจะแสดงเป็น "(ไม่พบชื่อครู)" หลังลบ — แนะนำให้เปลี่ยนผู้นิเทศในรายการนั้นก่อน หากต้องการเก็บชื่อไว้</div>'
+      : '') +
+    '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">' +
+    '<button class="btn btn-ghost" onclick="closeModal()">ยกเลิก</button>' +
+    '<button class="btn btn-danger" onclick="confirmDeleteTeacher(\'' + id + '\')">ลบถาวร</button></div>';
+
+  openModal("ยืนยันการลบครูออกจากระบบ", html);
+}
+
+function confirmDeleteTeacher(id) {
+  closeModal();
+  var regIds = state.regs.filter(function(r) { return r.teacherId === id; }).map(function(r) { return r.id; });
+  state.regs = state.regs.filter(function(r) { return r.teacherId !== id; });
+  state.evals = state.evals.filter(function(e) { return regIds.indexOf(e.regId) < 0; });
+  state.submissions = (state.submissions || []).filter(function(s) { return s.teacherId !== id; });
   state.teachers = state.teachers.filter(function(t) { return t.id !== id; });
+
   renderAdminTeachers();
   renderDashboard();
-  deleteRecordFromFirebase("teachers", id, "ลบรายชื่อครูแล้ว");
+  if (document.getElementById("admin-submission-body")) renderAdminSubmissions();
+
+  pushSemesterToFirebase("ลบรายชื่อครูและข้อมูลที่เกี่ยวข้องทั้งหมดแล้ว", ["teachers", "regs", "evals", "submissions"]);
 }
+
 
 function copyTeachersFromPrevYear() {
   var prevYear = state.semesterYear - 1;
