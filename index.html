@@ -160,8 +160,10 @@ tr:hover td{background:#f9fafb}
    flight, so it's impossible to miss (unlike the small corner toast). */
 .saving-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:10000;pointer-events:none}
 .saving-overlay.show{display:flex}
-.saving-overlay-box{background:#c0392b;color:#fff;padding:18px 32px;border-radius:12px;font-size:16px;font-weight:700;box-shadow:0 8px 30px rgba(0,0,0,.35);text-align:center;transition:background .15s}
+.saving-overlay-box{background:#1e3a5f;color:#fff;padding:18px 32px;border-radius:12px;font-size:16px;font-weight:700;box-shadow:0 8px 30px rgba(0,0,0,.35);text-align:center;transition:background .15s;display:flex;align-items:center;gap:12px}
 .saving-overlay-box.success{background:#1a7a4a}
+.saving-spinner{width:20px;height:20px;border:3px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
+.saving-overlay-box.success .saving-spinner{display:none}
 
 /* Full-screen spinner shown while the very first data load (or a semester
    switch) is in flight, so users don't stare at an empty/stale page not
@@ -246,7 +248,7 @@ tr:hover td{background:#f9fafb}
 <body>
 
 <div id="toast" class="toast"></div>
-<div id="saving-overlay" class="saving-overlay"><div class="saving-overlay-box">กำลังบันทึก...กรุณารอสักครู่</div></div>
+<div id="saving-overlay" class="saving-overlay"><div class="saving-overlay-box"><div class="saving-spinner"></div><span id="saving-overlay-text">กำลังบันทึก...กรุณารอสักครู่</span></div></div>
 <div id="loading-overlay" class="loading-overlay show"><div class="spinner"></div><div class="loading-overlay-text" id="loading-overlay-text">กำลังโหลดข้อมูล...</div></div>
 
 <!-- MODAL -->
@@ -791,6 +793,10 @@ function hidePageSyncBadge() {
 var savesInFlight = 0;
 function showSavingToast() {
   var el = document.getElementById("saving-overlay");
+  var box = el ? el.querySelector(".saving-overlay-box") : null;
+  var textEl = document.getElementById("saving-overlay-text");
+  if (box) box.classList.remove("success");
+  if (textEl) textEl.textContent = "กำลังบันทึก...กรุณารอสักครู่";
   if (el) el.className = "saving-overlay show";
 }
 var savedOverlayTimer;
@@ -799,19 +805,16 @@ function showSavedToast(msg) {
   // of just disappearing) so it's obvious the save actually completed.
   var overlay = document.getElementById("saving-overlay");
   var box = overlay ? overlay.querySelector(".saving-overlay-box") : null;
+  var textEl = document.getElementById("saving-overlay-text");
   var successText = "✓ " + (msg || "บันทึกข้อมูลสำเร็จ");
-  if (box) {
-    box.classList.add("success");
-    box.textContent = successText;
-  }
+  if (box) box.classList.add("success");
+  if (textEl) textEl.textContent = successText;
   if (overlay) overlay.className = "saving-overlay show";
   clearTimeout(savedOverlayTimer);
   savedOverlayTimer = setTimeout(function() {
     if (overlay) overlay.className = "saving-overlay";
-    if (box) {
-      box.classList.remove("success");
-      box.textContent = "กำลังบันทึก...กรุณารอสักครู่";
-    }
+    if (box) box.classList.remove("success");
+    if (textEl) textEl.textContent = "กำลังบันทึก...กรุณารอสักครู่";
   }, 1200);
 
   var t = document.getElementById("toast");
@@ -820,11 +823,13 @@ function showSavedToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(function() { t.className = "toast"; }, 2000);
 }
+var activeSaves = [];
 function trackSave(promise, successMsg) {
   savesInFlight++;
   if (successMsg !== null) showSavingToast();
-  return promise.then(function(res) {
+  var wrapped = promise.then(function(res) {
     savesInFlight = Math.max(0, savesInFlight - 1);
+    activeSaves = activeSaves.filter(function(p) { return p !== wrapped; });
     if (savesInFlight === 0) {
       var overlay = document.getElementById("saving-overlay");
       if (overlay) overlay.className = "saving-overlay";
@@ -833,12 +838,25 @@ function trackSave(promise, successMsg) {
     return res;
   }, function(err) {
     savesInFlight = Math.max(0, savesInFlight - 1);
+    activeSaves = activeSaves.filter(function(p) { return p !== wrapped; });
     if (savesInFlight === 0) {
       var overlay = document.getElementById("saving-overlay");
       if (overlay) overlay.className = "saving-overlay";
     }
     throw err;
   });
+  activeSaves.push(wrapped);
+  return wrapped;
+}
+// Wait until every save currently in flight has actually finished writing to
+// Firebase. refreshSemester() calls this before it re-fetches data, so it
+// never re-fetches a snapshot taken *before* a just-added/just-deleted record
+// was committed and then overwrites the screen with that stale, incomplete
+// snapshot -- which is what made a newly-added (or just-deleted) name appear
+// to "disappear" for a moment until the page was refreshed again.
+function waitForPendingSaves() {
+  if (!activeSaves.length) return Promise.resolve();
+  return Promise.all(activeSaves.map(function(p) { return p.catch(function() {}); })).then(waitForPendingSaves);
 }
 window.addEventListener("beforeunload", function(e) {
   if (savesInFlight > 0) {
@@ -867,7 +885,15 @@ function pushGlobalToFirebase(successMsg) {
 // submissions instead of the whole list being one blob.
 function arrayToKeyedObject(arr) {
   var obj = {};
-  (arr || []).forEach(function(item) { if (item && item.id) obj[item.id] = item; });
+  // IMPORTANT: never silently drop an item just because it has no `id`
+  // (e.g. legacy records saved before every record got a stable id).
+  // Give it a fallback key instead of discarding it, otherwise a single
+  // save/transaction can permanently delete old data from Firebase.
+  (arr || []).forEach(function(item, i) {
+    if (!item) return;
+    var key = item.id || ("legacy_" + i + "_" + (item.name || item.date || ""));
+    obj[key] = item;
+  });
   return obj;
 }
 
@@ -894,7 +920,15 @@ function semesterFieldRef(field) {
 function toKeyedObject(current) {
   var obj = {};
   if (Array.isArray(current)) {
-    current.forEach(function(item) { if (item && item.id) obj[item.id] = item; });
+    // IMPORTANT: never silently drop an item just because it has no `id`.
+    // Dropping it here means the next transaction write permanently erases
+    // that record from Firebase (this was the cause of old teacher names
+    // disappearing whenever a new one was added).
+    current.forEach(function(item, i) {
+      if (!item) return;
+      var key = item.id || ("legacy_" + i + "_" + (item.name || item.date || ""));
+      obj[key] = item;
+    });
   } else if (current && typeof current === "object") {
     obj = current;
   }
@@ -960,11 +994,9 @@ function pushSemesterToFirebase(successMsg, fields) {
   // Save immediately for the same reason as pushGlobalToFirebase above.
   return doSemesterSaveNow(successMsg, fields);
 }
-function flushSemesterSave() {
-  // Kept for compatibility with refreshSemester(); saves are no longer
-  // debounced, so there's nothing pending to flush anymore.
-  return Promise.resolve();
-}
+// (flushSemesterSave was removed -- refreshSemester() now uses
+// waitForPendingSaves() above, which actually waits for in-flight saves
+// instead of being a no-op.)
 
 function applyGlobalData(data) {
   isApplyingRemote = true;
@@ -1007,7 +1039,7 @@ function rerenderCurrentPage() {
 function refreshSemester(cb) {
   if (!semesterListenerRef) { if (typeof cb === "function") cb(); return; }
   showPageSyncBadge();
-  flushSemesterSave().then(function() {
+  waitForPendingSaves().then(function() {
     return semesterListenerRef.once("value");
   }).then(function(snap) {
     var d = snap.val();
@@ -1030,7 +1062,14 @@ function listenToSemester(term, year) {
   beginLoading("กำลังโหลดข้อมูลภาคเรียน...");
   ref.once("value").then(function(snap) {
     var data = snap.val();
-    if (!data || !fieldLength(data.teachers)) {
+    // IMPORTANT: only treat this as a brand-new/never-initialized semester
+    // when the whole node is missing (data === null). Previously this also
+    // triggered whenever the teacher count happened to be 0 (e.g. you
+    // deleted every teacher on purpose) -- and the branch below calls
+    // ref.set(seed), which WIPES the regs/evals/submissions that already
+    // exist at this path. Checking teacher count here is wrong because
+    // "0 teachers" is a perfectly valid state for an existing semester.
+    if (data === null) {
       if (term === 2) {
         var term1Key = semesterKey(1, year);
         dbRoot.child("semesters").child(term1Key).once("value").then(function(snap1) {
@@ -1184,7 +1223,13 @@ function statusClass(s) {
 }
 
 function getTeacher(id) {
-  return state.teachers.find(function(t) { return t.id === id; }) || {name: id, subject: "", room: ""};
+  // NOTE: fallback used to be {name: id, ...} which made any orphaned
+  // reference (a reg/eval/submission pointing at a teacherId that no
+  // longer exists in state.teachers) display the raw random ID string
+  // where the teacher's name should be -- looking exactly like the name
+  // had been corrupted. Show a clear placeholder instead so it's obvious
+  // this is a missing/deleted-teacher reference, not a real name.
+  return state.teachers.find(function(t) { return t.id === id; }) || {name: "(ไม่พบชื่อครู)", subject: "", room: "", _missingId: id};
 }
 
 function getReg(id) {
