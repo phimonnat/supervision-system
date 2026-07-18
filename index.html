@@ -248,7 +248,7 @@ tr:hover td{background:#f9fafb}
 <body>
 
 <div id="toast" class="toast"></div>
-<div id="saving-overlay" class="saving-overlay"><div class="saving-overlay-box"><div class="saving-spinner"></div><span id="saving-overlay-text">กำลังบันทึก...กรุณารอสักครู่</span></div></div>
+<div id="saving-overlay" class="saving-overlay"><div class="saving-overlay-box"><div class="saving-spinner"></div><span id="saving-overlay-text">กำลังบันทึก...กรุณารอสักครู่ อย่ารีเฟรชหน้าเว็บหรือปิดหน้าจอจนกว่าการบันทึกจะเสร็จสมบูรณ์</span></div></div>
 <div id="loading-overlay" class="loading-overlay show"><div class="spinner"></div><div class="loading-overlay-text" id="loading-overlay-text">กำลังโหลดข้อมูล...</div></div>
 
 <!-- MODAL -->
@@ -796,7 +796,7 @@ function showSavingToast() {
   var box = el ? el.querySelector(".saving-overlay-box") : null;
   var textEl = document.getElementById("saving-overlay-text");
   if (box) box.classList.remove("success");
-  if (textEl) textEl.textContent = "กำลังบันทึก...กรุณารอสักครู่";
+  if (textEl) textEl.textContent = "กำลังบันทึก...กรุณารอสักครู่ อย่ารีเฟรชหน้าเว็บหรือปิดหน้าจอจนกว่าการบันทึกจะเสร็จสมบูรณ์";
   if (el) el.className = "saving-overlay show";
 }
 var savedOverlayTimer;
@@ -814,7 +814,7 @@ function showSavedToast(msg) {
   savedOverlayTimer = setTimeout(function() {
     if (overlay) overlay.className = "saving-overlay";
     if (box) box.classList.remove("success");
-    if (textEl) textEl.textContent = "กำลังบันทึก...กรุณารอสักครู่";
+    if (textEl) textEl.textContent = "กำลังบันทึก...กรุณารอสักครู่ อย่ารีเฟรชหน้าเว็บหรือปิดหน้าจอจนกว่าการบันทึกจะเสร็จสมบูรณ์";
   }, 1200);
 
   var t = document.getElementById("toast");
@@ -1199,17 +1199,32 @@ function initFirebaseSync() {
     endLoading();
   });
 
+  // Start loading the semester the app currently assumes we're in RIGHT AWAY,
+  // in parallel with the meta lookup below, instead of waiting for meta to
+  // resolve first. Previously every refresh paid for the meta round-trip
+  // (find out which semester is "current") and only THEN started the
+  // semester-data round-trip -- two network round-trips back to back before
+  // any reg/eval/teacher data could appear. In the common case (meta agrees
+  // with the semester already in state, e.g. same day/visit), this now
+  // saves one full round-trip off the critical path before data shows up.
+  var assumedTerm = state.semesterTerm, assumedYear = state.semesterYear;
+  listenToSemester(assumedTerm, assumedYear);
+
   metaRef.once("value").then(function(snap) {
     var meta = snap.val();
     if (meta && meta.currentSemesterTerm && meta.currentSemesterYear) {
       state.semesterTerm = meta.currentSemesterTerm;
       state.semesterYear = meta.currentSemesterYear;
       updateSemesterLabel();
+      // Only re-fetch if meta disagrees with the semester we already started
+      // loading above -- avoids a redundant third round-trip in the common case.
+      if (meta.currentSemesterTerm !== assumedTerm || meta.currentSemesterYear !== assumedYear) {
+        listenToSemester(state.semesterTerm, state.semesterYear);
+      }
     }
-    listenToSemester(state.semesterTerm, state.semesterYear);
   }).catch(function(err) {
     console.error("Firebase meta load error:", err);
-    listenToSemester(state.semesterTerm, state.semesterYear);
+    // Already loading the assumed semester above, nothing more to do.
   });
 }
 
