@@ -910,6 +910,25 @@ function normalizeField(val) {
 }
 function fieldLength(val) { return normalizeField(val).length; }
 
+// Firebase orders each record by its (randomly generated) key alphabetically
+// -- not by when it was added -- so a plain normalizeField() on "teachers"
+// comes back in what looks like random order. Sort by subject group (in the
+// school's real curriculum order from SUBJECTS) and then by name within each
+// group, so the list is always predictable no matter how the raw data came
+// in. Works immediately on existing records too, no data migration needed.
+function sortTeachers(list) {
+  return (list || []).slice().sort(function(a, b) {
+    var ai = SUBJECTS.indexOf(a && a.subject);
+    var bi = SUBJECTS.indexOf(b && b.subject);
+    if (ai === -1) ai = SUBJECTS.length;
+    if (bi === -1) bi = SUBJECTS.length;
+    if (ai !== bi) return ai - bi;
+    var an = (a && a.name) || "";
+    var bn = (b && b.name) || "";
+    return an.localeCompare(bn, "th");
+  });
+}
+
 function semesterFieldRef(field) {
   var key = semesterKey(state.semesterTerm, state.semesterYear);
   return dbRoot.child("semesters").child(key).child(field);
@@ -948,6 +967,21 @@ function saveRecordToFirebase(field, record, successMsg) {
     var obj = toKeyedObject(current);
     obj[record.id] = record;
     return obj;
+  }).then(function(result) {
+    // Adopt the authoritative, just-committed value straight from Firebase's
+    // own transaction result instead of trusting whatever is currently in
+    // local `state`. This is what actually fixes the "only the newest name
+    // shows up" glitch: no matter what caused the optimistic local render to
+    // be wrong, this always re-syncs the screen to match the real database
+    // right after every successful save, with no page refresh needed.
+    if (result && result.committed && result.snapshot) {
+      isApplyingRemote = true;
+      state[field] = normalizeField(result.snapshot.val());
+      if (field === "teachers") state.teachers = sortTeachers(state.teachers);
+      rerenderCurrentPage();
+      isApplyingRemote = false;
+    }
+    return result;
   });
   return trackSave(promise, successMsg).catch(function(err) {
     console.error("Firebase save error (" + field + "):", err);
@@ -963,6 +997,15 @@ function deleteRecordFromFirebase(field, id, successMsg) {
     var obj = toKeyedObject(current);
     delete obj[id];
     return obj;
+  }).then(function(result) {
+    if (result && result.committed && result.snapshot) {
+      isApplyingRemote = true;
+      state[field] = normalizeField(result.snapshot.val());
+      if (field === "teachers") state.teachers = sortTeachers(state.teachers);
+      rerenderCurrentPage();
+      isApplyingRemote = false;
+    }
+    return result;
   });
   return trackSave(promise, successMsg).catch(function(err) {
     console.error("Firebase delete error (" + field + "):", err);
@@ -1012,6 +1055,7 @@ function applySemesterData(data) {
   SEMESTER_FIELDS.forEach(function(f) {
     state[f] = normalizeField(data && data[f]);
   });
+  state.teachers = sortTeachers(state.teachers);
   var fixedAny = false;
   (state.regs || []).forEach(function(r) {
     if (r && r.date) {
@@ -2420,7 +2464,7 @@ function copyTeachersFromPrevYear() {
     }
     var copied = JSON.parse(JSON.stringify(data.teachers));
     copied.forEach(function(t) { t.id = uid(); });
-    state.teachers = copied;
+    state.teachers = sortTeachers(copied);
     renderAdminTeachers();
     renderDashboard();
     pushSemesterToFirebase("คัดลอกรายชื่อ " + copied.length + " คน จากปีการศึกษา " + prevYear + " สำเร็จ", ["teachers"]);
@@ -2450,6 +2494,7 @@ function submitTeacher() {
   if (!name || !subject) { showToast("กรุณากรอกชื่อและกลุ่มสาระ", true); return; }
   var newTeacher = {id: uid(), name: name, subject: subject, room: room};
   state.teachers.push(newTeacher);
+  state.teachers = sortTeachers(state.teachers);
   closeModal();
   renderAdminTeachers();
   renderDashboard();
