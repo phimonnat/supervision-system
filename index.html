@@ -1215,21 +1215,35 @@ function initFirebaseSync() {
   // resolve first. Previously every refresh paid for the meta round-trip
   // (find out which semester is "current") and only THEN started the
   // semester-data round-trip -- two network round-trips back to back before
-  // any reg/eval/teacher data could appear. In the common case (meta agrees
-  // with the semester already in state, e.g. same day/visit), this now
-  // saves one full round-trip off the critical path before data shows up.
-  var assumedTerm = state.semesterTerm, assumedYear = state.semesterYear;
+  // any reg/eval/teacher data could appear.
+  //
+  // The "guess" used here is the last semester CONFIRMED correct by meta on
+  // a previous visit (cached in localStorage), not the hardcoded default in
+  // `state` -- a hardcoded guess silently goes stale every time the school
+  // moves to a new semester/year, which was causing the wrong semester's
+  // data (and a mismatched header) to show briefly at startup. The cached
+  // guess is correct on every visit except the very first one ever, or right
+  // after the admin switches semester on a *different* device.
+  var cachedSemester = getCachedSemester();
+  var assumedTerm = cachedSemester ? cachedSemester.term : state.semesterTerm;
+  var assumedYear = cachedSemester ? cachedSemester.year : state.semesterYear;
+  state.semesterTerm = assumedTerm;
+  state.semesterYear = assumedYear;
+  updateSemesterLabel(); // keep the header in sync with the data we're about to show
   listenToSemester(assumedTerm, assumedYear);
 
   metaRef.once("value").then(function(snap) {
     var meta = snap.val();
     if (meta && meta.currentSemesterTerm && meta.currentSemesterYear) {
-      state.semesterTerm = meta.currentSemesterTerm;
-      state.semesterYear = meta.currentSemesterYear;
-      updateSemesterLabel();
-      // Only re-fetch if meta disagrees with the semester we already started
-      // loading above -- avoids a redundant third round-trip in the common case.
+      setCachedSemester(meta.currentSemesterTerm, meta.currentSemesterYear);
+      // Only re-fetch (and only then touch state/header) if meta disagrees
+      // with the semester we already started loading above -- avoids a
+      // redundant third round-trip and an unnecessary re-render in the
+      // (now very common) case where the cached guess was already correct.
       if (meta.currentSemesterTerm !== assumedTerm || meta.currentSemesterYear !== assumedYear) {
+        state.semesterTerm = meta.currentSemesterTerm;
+        state.semesterYear = meta.currentSemesterYear;
+        updateSemesterLabel();
         listenToSemester(state.semesterTerm, state.semesterYear);
       }
     }
@@ -1243,6 +1257,30 @@ function initFirebaseSync() {
 // HELPERS
 // ======================================================
 function uid() { return Math.random().toString(36).slice(2, 9); }
+
+// Remembers the last semester confirmed correct by Firebase's `meta` node
+// (i.e. the actual "current semester" the school has set), so that on the
+// NEXT visit the app's startup guess (used to fetch semester data in
+// parallel with the meta lookup, see initFirebaseSync) is based on real
+// confirmed data instead of a hardcoded default in the code -- which
+// silently goes stale every time the school moves to a new semester/year
+// and previously caused the wrong semester's data to flash on screen at
+// startup before the corrected fetch caught up.
+var SEMESTER_CACHE_KEY = "supervision_last_confirmed_semester";
+function getCachedSemester() {
+  try {
+    var raw = localStorage.getItem(SEMESTER_CACHE_KEY);
+    if (!raw) return null;
+    var obj = JSON.parse(raw);
+    if (obj && obj.term && obj.year) return obj;
+  } catch (e) { /* localStorage unavailable (private mode, etc.) -- ignore */ }
+  return null;
+}
+function setCachedSemester(term, year) {
+  try {
+    localStorage.setItem(SEMESTER_CACHE_KEY, JSON.stringify({term: term, year: year}));
+  } catch (e) { /* localStorage unavailable -- ignore, not critical */ }
+}
 
 // Monochrome trash-can icon (inherits button text color via currentColor)
 // used instead of the 🗑️ emoji, which renders inconsistently across
@@ -1506,6 +1544,7 @@ function submitSemester() {
   metaRef.set({currentSemesterTerm: term, currentSemesterYear: year}).catch(function(err) {
     console.error("Firebase meta save error:", err);
   });
+  setCachedSemester(term, year);
   listenToSemester(term, year);
   showToast("เปลี่ยนเป็นภาคเรียนที่ " + term + "/" + year + " แล้ว");
 }
