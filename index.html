@@ -160,26 +160,8 @@ tr:hover td{background:#f9fafb}
    flight, so it's impossible to miss (unlike the small corner toast). */
 .saving-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:10000;pointer-events:none}
 .saving-overlay.show{display:flex}
-.saving-overlay-box{background:#1e3a5f;color:#fff;padding:18px 32px;border-radius:12px;font-size:16px;font-weight:700;box-shadow:0 8px 30px rgba(0,0,0,.35);text-align:center;transition:background .15s;display:flex;align-items:center;gap:12px}
+.saving-overlay-box{background:#c0392b;color:#fff;padding:18px 32px;border-radius:12px;font-size:16px;font-weight:700;box-shadow:0 8px 30px rgba(0,0,0,.35);text-align:center;transition:background .15s}
 .saving-overlay-box.success{background:#1a7a4a}
-.saving-spinner{width:20px;height:20px;border:3px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
-.saving-overlay-box.success .saving-spinner{display:none}
-
-/* Full-screen spinner shown while the very first data load (or a semester
-   switch) is in flight, so users don't stare at an empty/stale page not
-   knowing whether it's really empty or just still loading. */
-.loading-overlay{position:fixed;inset:0;background:rgba(240,244,248,.94);display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:9999}
-.loading-overlay.show{display:flex}
-.spinner{width:42px;height:42px;border:4px solid #d7e0ea;border-top-color:#1e3a5f;border-radius:50%;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.loading-overlay-text{color:#1e3a5f;font-weight:700;font-size:14px}
-
-/* Small non-blocking spinner badge next to the page title, shown while
-   navigating between pages (data already on screen is kept, this just
-   signals a background refresh is happening). */
-.page-sync-badge{display:none;align-items:center;background:#eaf1fb;color:#1e3a5f;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;margin-left:8px;white-space:nowrap}
-.page-sync-badge.show{display:inline-flex}
-.mini-spinner{width:11px;height:11px;border:2px solid #c7d7ec;border-top-color:#1e3a5f;border-radius:50%;animation:spin .7s linear infinite;display:inline-block;margin-right:5px}
 
 /* PAGE HEADER */
 .page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}
@@ -248,8 +230,7 @@ tr:hover td{background:#f9fafb}
 <body>
 
 <div id="toast" class="toast"></div>
-<div id="saving-overlay" class="saving-overlay"><div class="saving-overlay-box"><div class="saving-spinner"></div><span id="saving-overlay-text">กำลังบันทึก...กรุณารอสักครู่<br>อย่ารีเฟรชหน้าเว็บหรือปิดหน้าจอจนกว่าการบันทึกจะเสร็จสมบูรณ์</span></div></div>
-<div id="loading-overlay" class="loading-overlay show"><div class="spinner"></div><div class="loading-overlay-text" id="loading-overlay-text">กำลังโหลดข้อมูล...</div></div>
+<div id="saving-overlay" class="saving-overlay"><div class="saving-overlay-box">กำลังบันทึก...กรุณารอสักครู่</div></div>
 
 <!-- MODAL -->
 <div id="modal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeModal()">
@@ -310,7 +291,6 @@ tr:hover td{background:#f9fafb}
     <div style="display:flex;align-items:center">
       <button class="menu-toggle" onclick="toggleSidebar()" aria-label="เปิดเมนู">&#9776;</button>
       <div class="top-title" id="page-title">หน้าหลัก</div>
-      <span class="page-sync-badge" id="page-sync-badge"><span class="mini-spinner"></span>กำลังอัปเดตข้อมูล...</span>
     </div>
     <div class="top-badges">
       <div class="top-badge" id="semester-badge" style="cursor:pointer" onclick="openSemesterModal()"><span id="semester-label">ภาคเรียนที่ 1/2568</span></div>
@@ -704,7 +684,7 @@ var MONTH_TH = [
 // ======================================================
 var state = {
   semesterTerm: 1,
-  semesterYear: 2569,
+  semesterYear: 2568,
   adminLoggedIn: false,
   calDate: new Date(),
   calSelected: null,
@@ -749,54 +729,9 @@ function setSyncBadge(mode) {
   }
 }
 
-// Full-screen spinner: used for the very first data load and for semester
-// switches, where there is genuinely nothing on screen yet worth showing.
-// Uses a pending-count so overlapping loads (e.g. global docs + semester
-// data both loading at startup) don't hide it until everything is done.
-var loadingPending = 0;
-function beginLoading(text) {
-  loadingPending++;
-  var el = document.getElementById("loading-overlay");
-  var t = document.getElementById("loading-overlay-text");
-  if (t) t.textContent = text || "กำลังโหลดข้อมูล...";
-  if (el) el.className = "loading-overlay show";
-}
-function endLoading() {
-  loadingPending = Math.max(0, loadingPending - 1);
-  if (loadingPending === 0) {
-    var el = document.getElementById("loading-overlay");
-    if (el) el.className = "loading-overlay";
-  }
-}
-// Safety net: never let the overlay get stuck forever if a promise chain
-// somehow never resolves/rejects (e.g. a dropped connection).
-setTimeout(function() { loadingPending = 0; endLoading(); }, 12000);
-
-// Small badge spinner: used when navigating between pages that already have
-// data on screen, so the refresh doesn't block the UI, just signals it.
-// Counter-based since a single page (e.g. admin) can trigger more than one
-// background refresh (docs + semester data) at the same time.
-var pageSyncPending = 0;
-function showPageSyncBadge() {
-  pageSyncPending++;
-  var el = document.getElementById("page-sync-badge");
-  if (el) el.className = "page-sync-badge show";
-}
-function hidePageSyncBadge() {
-  pageSyncPending = Math.max(0, pageSyncPending - 1);
-  if (pageSyncPending === 0) {
-    var el = document.getElementById("page-sync-badge");
-    if (el) el.className = "page-sync-badge";
-  }
-}
-
 var savesInFlight = 0;
 function showSavingToast() {
   var el = document.getElementById("saving-overlay");
-  var box = el ? el.querySelector(".saving-overlay-box") : null;
-  var textEl = document.getElementById("saving-overlay-text");
-  if (box) box.classList.remove("success");
-  if (textEl) textEl.textContent = "กำลังบันทึก...กรุณารอสักครู่ อย่ารีเฟรชหน้าเว็บหรือปิดหน้าจอจนกว่าการบันทึกจะเสร็จสมบูรณ์";
   if (el) el.className = "saving-overlay show";
 }
 var savedOverlayTimer;
@@ -805,16 +740,19 @@ function showSavedToast(msg) {
   // of just disappearing) so it's obvious the save actually completed.
   var overlay = document.getElementById("saving-overlay");
   var box = overlay ? overlay.querySelector(".saving-overlay-box") : null;
-  var textEl = document.getElementById("saving-overlay-text");
   var successText = "✓ " + (msg || "บันทึกข้อมูลสำเร็จ");
-  if (box) box.classList.add("success");
-  if (textEl) textEl.textContent = successText;
+  if (box) {
+    box.classList.add("success");
+    box.textContent = successText;
+  }
   if (overlay) overlay.className = "saving-overlay show";
   clearTimeout(savedOverlayTimer);
   savedOverlayTimer = setTimeout(function() {
     if (overlay) overlay.className = "saving-overlay";
-    if (box) box.classList.remove("success");
-    if (textEl) textEl.textContent = "กำลังบันทึก...กรุณารอสักครู่ อย่ารีเฟรชหน้าเว็บหรือปิดหน้าจอจนกว่าการบันทึกจะเสร็จสมบูรณ์";
+    if (box) {
+      box.classList.remove("success");
+      box.textContent = "กำลังบันทึก...กรุณารอสักครู่";
+    }
   }, 1200);
 
   var t = document.getElementById("toast");
@@ -823,13 +761,11 @@ function showSavedToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(function() { t.className = "toast"; }, 2000);
 }
-var activeSaves = [];
 function trackSave(promise, successMsg) {
   savesInFlight++;
   if (successMsg !== null) showSavingToast();
-  var wrapped = promise.then(function(res) {
+  return promise.then(function(res) {
     savesInFlight = Math.max(0, savesInFlight - 1);
-    activeSaves = activeSaves.filter(function(p) { return p !== wrapped; });
     if (savesInFlight === 0) {
       var overlay = document.getElementById("saving-overlay");
       if (overlay) overlay.className = "saving-overlay";
@@ -838,25 +774,12 @@ function trackSave(promise, successMsg) {
     return res;
   }, function(err) {
     savesInFlight = Math.max(0, savesInFlight - 1);
-    activeSaves = activeSaves.filter(function(p) { return p !== wrapped; });
     if (savesInFlight === 0) {
       var overlay = document.getElementById("saving-overlay");
       if (overlay) overlay.className = "saving-overlay";
     }
     throw err;
   });
-  activeSaves.push(wrapped);
-  return wrapped;
-}
-// Wait until every save currently in flight has actually finished writing to
-// Firebase. refreshSemester() calls this before it re-fetches data, so it
-// never re-fetches a snapshot taken *before* a just-added/just-deleted record
-// was committed and then overwrites the screen with that stale, incomplete
-// snapshot -- which is what made a newly-added (or just-deleted) name appear
-// to "disappear" for a moment until the page was refreshed again.
-function waitForPendingSaves() {
-  if (!activeSaves.length) return Promise.resolve();
-  return Promise.all(activeSaves.map(function(p) { return p.catch(function() {}); })).then(waitForPendingSaves);
 }
 window.addEventListener("beforeunload", function(e) {
   if (savesInFlight > 0) {
@@ -885,15 +808,7 @@ function pushGlobalToFirebase(successMsg) {
 // submissions instead of the whole list being one blob.
 function arrayToKeyedObject(arr) {
   var obj = {};
-  // IMPORTANT: never silently drop an item just because it has no `id`
-  // (e.g. legacy records saved before every record got a stable id).
-  // Give it a fallback key instead of discarding it, otherwise a single
-  // save/transaction can permanently delete old data from Firebase.
-  (arr || []).forEach(function(item, i) {
-    if (!item) return;
-    var key = item.id || ("legacy_" + i + "_" + (item.name || item.date || ""));
-    obj[key] = item;
-  });
+  (arr || []).forEach(function(item) { if (item && item.id) obj[item.id] = item; });
   return obj;
 }
 
@@ -910,104 +825,28 @@ function normalizeField(val) {
 }
 function fieldLength(val) { return normalizeField(val).length; }
 
-// Firebase orders each record by its (randomly generated) key alphabetically
-// -- not by when it was added -- so a plain normalizeField() on "teachers"
-// comes back in what looks like random order. Sort by subject group (in the
-// school's real curriculum order from SUBJECTS) and then by name within each
-// group, so the list is always predictable no matter how the raw data came
-// in. Works immediately on existing records too, no data migration needed.
-function sortTeachers(list) {
-  return (list || []).slice().sort(function(a, b) {
-    var ai = SUBJECTS.indexOf(a && a.subject);
-    var bi = SUBJECTS.indexOf(b && b.subject);
-    if (ai === -1) ai = SUBJECTS.length;
-    if (bi === -1) bi = SUBJECTS.length;
-    if (ai !== bi) return ai - bi;
-    var an = (a && a.name) || "";
-    var bn = (b && b.name) || "";
-    return an.localeCompare(bn, "th");
-  });
-}
-
 function semesterFieldRef(field) {
   var key = semesterKey(state.semesterTerm, state.semesterYear);
   return dbRoot.child("semesters").child(key).child(field);
 }
 
-// Turn whatever is currently stored at a field's path (old plain array, new
-// {id: record} object, or nothing yet) into a plain {id: record} object.
-function toKeyedObject(current) {
-  var obj = {};
-  if (Array.isArray(current)) {
-    // IMPORTANT: never silently drop an item just because it has no `id`.
-    // Dropping it here means the next transaction write permanently erases
-    // that record from Firebase (this was the cause of old teacher names
-    // disappearing whenever a new one was added).
-    current.forEach(function(item, i) {
-      if (!item) return;
-      var key = item.id || ("legacy_" + i + "_" + (item.name || item.date || ""));
-      obj[key] = item;
-    });
-  } else if (current && typeof current === "object") {
-    obj = current;
-  }
-  return obj;
-}
-
-// Write a single record (add or edit) using a Firebase transaction on the
-// whole field (regs / evals / teachers / submissions), not a plain .set() on
-// an assumed id-path. A transaction always re-reads the current server value
-// right before writing and retries automatically if another client wrote at
-// the same time -- so this is correct and collision-free whether the data is
-// still the old plain-array shape, already the new keyed shape, or being
-// written to by someone else at the exact same moment.
+// Write a single record (add or edit) to its own path — e.g.
+// semesters/1-2568/regs/{id} — without touching any other record. This is
+// what makes two people saving different records at the same time never
+// collide, since each write only ever touches its own path.
 function saveRecordToFirebase(field, record, successMsg) {
   if (isApplyingRemote || !record || !record.id) return;
-  var promise = semesterFieldRef(field).transaction(function(current) {
-    var obj = toKeyedObject(current);
-    obj[record.id] = record;
-    return obj;
-  }).then(function(result) {
-    // Adopt the authoritative, just-committed value straight from Firebase's
-    // own transaction result instead of trusting whatever is currently in
-    // local `state`. This is what actually fixes the "only the newest name
-    // shows up" glitch: no matter what caused the optimistic local render to
-    // be wrong, this always re-syncs the screen to match the real database
-    // right after every successful save, with no page refresh needed.
-    if (result && result.committed && result.snapshot) {
-      isApplyingRemote = true;
-      state[field] = normalizeField(result.snapshot.val());
-      if (field === "teachers") state.teachers = sortTeachers(state.teachers);
-      rerenderCurrentPage();
-      isApplyingRemote = false;
-    }
-    return result;
-  });
-  return trackSave(promise, successMsg).catch(function(err) {
+  return trackSave(semesterFieldRef(field).child(record.id).set(record), successMsg).catch(function(err) {
     console.error("Firebase save error (" + field + "):", err);
     showToast("บันทึกขึ้นคลาวด์ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต", true);
   });
 }
 
-// Same idea as above, but removes one record's key from the field instead.
+// Remove a single record at its own path — e.g. semesters/1-2568/regs/{id}
+// — without touching any other record.
 function deleteRecordFromFirebase(field, id, successMsg) {
   if (isApplyingRemote || !id) return;
-  var promise = semesterFieldRef(field).transaction(function(current) {
-    if (current === null) return current; // nothing there yet, nothing to remove
-    var obj = toKeyedObject(current);
-    delete obj[id];
-    return obj;
-  }).then(function(result) {
-    if (result && result.committed && result.snapshot) {
-      isApplyingRemote = true;
-      state[field] = normalizeField(result.snapshot.val());
-      if (field === "teachers") state.teachers = sortTeachers(state.teachers);
-      rerenderCurrentPage();
-      isApplyingRemote = false;
-    }
-    return result;
-  });
-  return trackSave(promise, successMsg).catch(function(err) {
+  return trackSave(semesterFieldRef(field).child(id).remove(), successMsg).catch(function(err) {
     console.error("Firebase delete error (" + field + "):", err);
     showToast("บันทึกขึ้นคลาวด์ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต", true);
   });
@@ -1037,9 +876,11 @@ function pushSemesterToFirebase(successMsg, fields) {
   // Save immediately for the same reason as pushGlobalToFirebase above.
   return doSemesterSaveNow(successMsg, fields);
 }
-// (flushSemesterSave was removed -- refreshSemester() now uses
-// waitForPendingSaves() above, which actually waits for in-flight saves
-// instead of being a no-op.)
+function flushSemesterSave() {
+  // Kept for compatibility with refreshSemester(); saves are no longer
+  // debounced, so there's nothing pending to flush anymore.
+  return Promise.resolve();
+}
 
 function applyGlobalData(data) {
   isApplyingRemote = true;
@@ -1052,10 +893,17 @@ function applyGlobalData(data) {
 
 function applySemesterData(data) {
   isApplyingRemote = true;
+  // Any field still stored as a plain array (old-style save, from before the
+  // per-record path change) needs a one-time migration: as long as it's a
+  // bare array in Firebase, single-record writes/removes at regs/{id} etc.
+  // target a path that never existed and silently do nothing -- which is
+  // exactly why a deleted registration could still show up after a refresh.
+  var legacyArrayFields = [];
   SEMESTER_FIELDS.forEach(function(f) {
-    state[f] = normalizeField(data && data[f]);
+    var raw = data && data[f];
+    if (Array.isArray(raw) && raw.length) legacyArrayFields.push(f);
+    state[f] = normalizeField(raw);
   });
-  state.teachers = sortTeachers(state.teachers);
   var fixedAny = false;
   (state.regs || []).forEach(function(r) {
     if (r && r.date) {
@@ -1065,7 +913,10 @@ function applySemesterData(data) {
   });
   rerenderCurrentPage();
   isApplyingRemote = false;
-  if (fixedAny) pushSemesterToFirebase(null, ["regs"]);
+  if (fixedAny && legacyArrayFields.indexOf("regs") === -1) legacyArrayFields.push("regs");
+  if (legacyArrayFields.length) {
+    pushSemesterToFirebase(null, legacyArrayFields);
+  }
 }
 
 function rerenderCurrentPage() {
@@ -1082,52 +933,30 @@ function rerenderCurrentPage() {
 
 function refreshSemester(cb) {
   if (!semesterListenerRef) { if (typeof cb === "function") cb(); return; }
-  showPageSyncBadge();
-  waitForPendingSaves().then(function() {
+  flushSemesterSave().then(function() {
     return semesterListenerRef.once("value");
   }).then(function(snap) {
     var d = snap.val();
     applySemesterData(d || {regs:[], evals:[], submissions:[], teachers:[]});
-    hidePageSyncBadge();
     if (typeof cb === "function") cb();
   }).catch(function(err) {
     console.error("Firebase refresh error (semester):", err);
     showToast("โหลดข้อมูลล่าสุดไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต", true);
-    hidePageSyncBadge();
     if (typeof cb === "function") cb();
   });
 }
 
-// Incremented every time listenToSemester() is called. Used so that if two
-// calls are in flight at once (e.g. the "assumed semester" fetch fired at
-// startup, and a second corrected fetch fired once meta.currentSemesterTerm/
-// Year turns out to be different), whichever response comes back is only
-// applied if it's still the LATEST request -- a slower, stale response from
-// an earlier/superseded call is discarded instead of overwriting the screen
-// with the wrong semester's data.
-var semesterLoadToken = 0;
 function listenToSemester(term, year) {
   if (semesterListenerRef) semesterListenerRef.off();
   var key = semesterKey(term, year);
   var ref = dbRoot.child("semesters").child(key);
   semesterListenerRef = ref;
-  var myToken = ++semesterLoadToken;
-  beginLoading("กำลังโหลดข้อมูลภาคเรียน...");
   ref.once("value").then(function(snap) {
-    if (myToken !== semesterLoadToken) { endLoading(); return; } // superseded by a newer request
     var data = snap.val();
-    // IMPORTANT: only treat this as a brand-new/never-initialized semester
-    // when the whole node is missing (data === null). Previously this also
-    // triggered whenever the teacher count happened to be 0 (e.g. you
-    // deleted every teacher on purpose) -- and the branch below calls
-    // ref.set(seed), which WIPES the regs/evals/submissions that already
-    // exist at this path. Checking teacher count here is wrong because
-    // "0 teachers" is a perfectly valid state for an existing semester.
-    if (data === null) {
+    if (!data || !fieldLength(data.teachers)) {
       if (term === 2) {
         var term1Key = semesterKey(1, year);
         dbRoot.child("semesters").child(term1Key).once("value").then(function(snap1) {
-          if (myToken !== semesterLoadToken) { endLoading(); return; } // superseded
           var term1Data = snap1.val();
           var copiedTeachers = (term1Data && fieldLength(term1Data.teachers))
             ? JSON.parse(JSON.stringify(normalizeField(term1Data.teachers)))
@@ -1136,44 +965,34 @@ function listenToSemester(term, year) {
           ref.set(seed);
           applySemesterData(seed);
           if (copiedTeachers.length) showToast("คัดลอกรายชื่อครูจากภาคเรียนที่ 1 มาให้อัตโนมัติ");
-          endLoading();
           // NOTE: no more ref.on("value", ...) here -> semester data (which can
           // contain legacy base64 file submissions) is now only re-fetched
           // on-demand via refreshSemester(), called when a page that needs it
           // is opened, instead of being streamed to every client forever.
-        }).catch(function(err) {
-          console.error("Firebase semester load error (term1 copy):", err);
-          endLoading();
         });
       } else {
         var seed = {regs: [], evals: [], submissions: [],
           teachers: normalizeField(data && data.teachers)};
         if (!data) ref.set(seed);
         applySemesterData(seed);
-        endLoading();
       }
     } else {
       applySemesterData(data);
-      endLoading();
     }
   }).catch(function(err) {
     console.error("Firebase semester load error:", err);
     showToast("โหลดข้อมูลภาคเรียนไม่สำเร็จ", true);
-    endLoading();
   });
 }
 
 function refreshGlobalDocs(cb) {
-  showPageSyncBadge();
   globalRef.once("value").then(function(snap) {
     var data = snap.val();
     if (data) applyGlobalData(data);
-    hidePageSyncBadge();
     if (typeof cb === "function") cb();
   }).catch(function(err) {
     console.error("Firebase refresh error (global):", err);
     showToast("โหลดรายการไฟล์ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต", true);
-    hidePageSyncBadge();
     if (typeof cb === "function") cb();
   });
 }
@@ -1186,7 +1005,6 @@ function initFirebaseSync() {
     else setSyncBadge("offline");
   });
 
-  beginLoading("กำลังโหลดข้อมูล...");
   globalRef.once("value").then(function(snap) {
     var data = snap.val();
     if (!data) {
@@ -1196,7 +1014,6 @@ function initFirebaseSync() {
     } else {
       applyGlobalData(data);
     }
-    endLoading();
     // NOTE: intentionally NOT attaching globalRef.on("value", ...) here.
     // "docs" can contain base64-encoded uploaded files, so a realtime listener
     // on this node meant EVERY connected client re-downloaded the entire docs
@@ -1207,49 +1024,19 @@ function initFirebaseSync() {
     console.error("Firebase connect error (global):", err);
     setSyncBadge("offline");
     showToast("เชื่อมต่อคลาวด์ไม่สำเร็จ ใช้งานแบบออฟไลน์", true);
-    endLoading();
   });
-
-  // Start loading the semester the app currently assumes we're in RIGHT AWAY,
-  // in parallel with the meta lookup below, instead of waiting for meta to
-  // resolve first. Previously every refresh paid for the meta round-trip
-  // (find out which semester is "current") and only THEN started the
-  // semester-data round-trip -- two network round-trips back to back before
-  // any reg/eval/teacher data could appear.
-  //
-  // The "guess" used here is the last semester CONFIRMED correct by meta on
-  // a previous visit (cached in localStorage), not the hardcoded default in
-  // `state` -- a hardcoded guess silently goes stale every time the school
-  // moves to a new semester/year, which was causing the wrong semester's
-  // data (and a mismatched header) to show briefly at startup. The cached
-  // guess is correct on every visit except the very first one ever, or right
-  // after the admin switches semester on a *different* device.
-  var cachedSemester = getCachedSemester();
-  var assumedTerm = cachedSemester ? cachedSemester.term : state.semesterTerm;
-  var assumedYear = cachedSemester ? cachedSemester.year : state.semesterYear;
-  state.semesterTerm = assumedTerm;
-  state.semesterYear = assumedYear;
-  updateSemesterLabel(); // keep the header in sync with the data we're about to show
-  listenToSemester(assumedTerm, assumedYear);
 
   metaRef.once("value").then(function(snap) {
     var meta = snap.val();
     if (meta && meta.currentSemesterTerm && meta.currentSemesterYear) {
-      setCachedSemester(meta.currentSemesterTerm, meta.currentSemesterYear);
-      // Only re-fetch (and only then touch state/header) if meta disagrees
-      // with the semester we already started loading above -- avoids a
-      // redundant third round-trip and an unnecessary re-render in the
-      // (now very common) case where the cached guess was already correct.
-      if (meta.currentSemesterTerm !== assumedTerm || meta.currentSemesterYear !== assumedYear) {
-        state.semesterTerm = meta.currentSemesterTerm;
-        state.semesterYear = meta.currentSemesterYear;
-        updateSemesterLabel();
-        listenToSemester(state.semesterTerm, state.semesterYear);
-      }
+      state.semesterTerm = meta.currentSemesterTerm;
+      state.semesterYear = meta.currentSemesterYear;
+      updateSemesterLabel();
     }
+    listenToSemester(state.semesterTerm, state.semesterYear);
   }).catch(function(err) {
     console.error("Firebase meta load error:", err);
-    // Already loading the assumed semester above, nothing more to do.
+    listenToSemester(state.semesterTerm, state.semesterYear);
   });
 }
 
@@ -1257,35 +1044,6 @@ function initFirebaseSync() {
 // HELPERS
 // ======================================================
 function uid() { return Math.random().toString(36).slice(2, 9); }
-
-// Remembers the last semester confirmed correct by Firebase's `meta` node
-// (i.e. the actual "current semester" the school has set), so that on the
-// NEXT visit the app's startup guess (used to fetch semester data in
-// parallel with the meta lookup, see initFirebaseSync) is based on real
-// confirmed data instead of a hardcoded default in the code -- which
-// silently goes stale every time the school moves to a new semester/year
-// and previously caused the wrong semester's data to flash on screen at
-// startup before the corrected fetch caught up.
-var SEMESTER_CACHE_KEY = "supervision_last_confirmed_semester";
-function getCachedSemester() {
-  try {
-    var raw = localStorage.getItem(SEMESTER_CACHE_KEY);
-    if (!raw) return null;
-    var obj = JSON.parse(raw);
-    if (obj && obj.term && obj.year) return obj;
-  } catch (e) { /* localStorage unavailable (private mode, etc.) -- ignore */ }
-  return null;
-}
-function setCachedSemester(term, year) {
-  try {
-    localStorage.setItem(SEMESTER_CACHE_KEY, JSON.stringify({term: term, year: year}));
-  } catch (e) { /* localStorage unavailable -- ignore, not critical */ }
-}
-
-// Monochrome trash-can icon (inherits button text color via currentColor)
-// used instead of the 🗑️ emoji, which renders inconsistently across
-// devices/OS (colorful on some, a missing-glyph box on others).
-var TRASH_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>';
 
 // Fix for a known Chrome/Android bug on Thai-locale devices: the native
 // <input type="date"> picker displays Buddhist Era (พ.ศ.) years but some
@@ -1336,13 +1094,7 @@ function statusClass(s) {
 }
 
 function getTeacher(id) {
-  // NOTE: fallback used to be {name: id, ...} which made any orphaned
-  // reference (a reg/eval/submission pointing at a teacherId that no
-  // longer exists in state.teachers) display the raw random ID string
-  // where the teacher's name should be -- looking exactly like the name
-  // had been corrupted. Show a clear placeholder instead so it's obvious
-  // this is a missing/deleted-teacher reference, not a real name.
-  return state.teachers.find(function(t) { return t.id === id; }) || {name: "(ไม่พบชื่อครู)", subject: "", room: "", _missingId: id};
+  return state.teachers.find(function(t) { return t.id === id; }) || {name: id, subject: "", room: ""};
 }
 
 function getReg(id) {
@@ -1544,7 +1296,6 @@ function submitSemester() {
   metaRef.set({currentSemesterTerm: term, currentSemesterYear: year}).catch(function(err) {
     console.error("Firebase meta save error:", err);
   });
-  setCachedSemester(term, year);
   listenToSemester(term, year);
   showToast("เปลี่ยนเป็นภาคเรียนที่ " + term + "/" + year + " แล้ว");
 }
@@ -1808,7 +1559,7 @@ function renderRegList(round) {
         if (r.status === "รอดำเนินการ") {
           html += '<button class="btn btn-ghost btn-xs" onclick="confirmReg(\'' + r.id + '\',' + round + ')">&#x2713;</button> ';
         }
-        html += '<button class="btn btn-danger btn-xs" onclick="deleteReg(\'' + r.id + '\',' + round + ')">' + TRASH_ICON_SVG + '</button></td>';
+        html += '<button class="btn btn-danger btn-xs" onclick="deleteReg(\'' + r.id + '\',' + round + ')">&#x1F5D1;</button></td>';
       }
       html += '</tr>';
     });
@@ -2473,10 +2224,32 @@ function buildTeacherReportHtml(teacherId, pageBreak) {
   return html;
 }
 
+// Waits for every <img> inside #print-report to finish loading (success or
+// error) before resolving, with a hard timeout so a broken/slow image URL
+// (e.g. a Firebase Storage photo) can never hang the print forever. Without
+// this, window.print() used to fire on a fixed 100ms timer, long before
+// remote photos had actually downloaded -- so printed reports showed empty
+// photo frames instead of the images.
+function waitForPrintImages(container, maxWaitMs) {
+  var imgs = container.querySelectorAll("img");
+  if (!imgs.length) return Promise.resolve();
+  var promises = Array.prototype.map.call(imgs, function(img) {
+    if (img.complete) return Promise.resolve();
+    return new Promise(function(resolve) {
+      img.addEventListener("load", resolve, { once: true });
+      img.addEventListener("error", resolve, { once: true });
+    });
+  });
+  var allLoaded = Promise.all(promises);
+  var timeout = new Promise(function(resolve) { setTimeout(resolve, maxWaitMs || 4000); });
+  return Promise.race([allLoaded, timeout]);
+}
+
 function printTeacherReport(teacherId) {
   var html = buildTeacherReportHtml(teacherId, false);
-  document.getElementById("print-report").innerHTML = html;
-  setTimeout(function() { window.print(); }, 100);
+  var el = document.getElementById("print-report");
+  el.innerHTML = html;
+  waitForPrintImages(el).then(function() { window.print(); });
 }
 
 function printAllTeacherReports() {
@@ -2487,8 +2260,9 @@ function printAllTeacherReports() {
   var html = state.teachers.map(function(t) {
     return buildTeacherReportHtml(t.id, true);
   }).join("");
-  document.getElementById("print-report").innerHTML = html;
-  setTimeout(function() { window.print(); }, 100);
+  var el = document.getElementById("print-report");
+  el.innerHTML = html;
+  waitForPrintImages(el, 8000).then(function() { window.print(); });
 }
 
 // ======================================================
@@ -2501,7 +2275,7 @@ function renderAdminTeachers() {
   var list = q ? state.teachers.filter(function(t) { return t.name && t.name.toLowerCase().indexOf(q) >= 0; }) : state.teachers;
   list.forEach(function(t, i) {
     html += '<tr><td>' + (i+1) + '</td><td><strong>' + highlightMatch(t.name, q) + '</strong></td><td>' + t.subject + '</td><td>' + t.room + '</td>' +
-      '<td><button class="btn btn-danger btn-xs" onclick="deleteTeacher(\'' + t.id + '\')">' + TRASH_ICON_SVG + '</button></td></tr>';
+      '<td><button class="btn btn-danger btn-xs" onclick="deleteTeacher(\'' + t.id + '\')">&#x1F5D1;</button></td></tr>';
   });
   document.getElementById("admin-teacher-body").innerHTML = html;
   var copyBtn = document.getElementById("copy-teachers-btn");
@@ -2515,49 +2289,12 @@ function renderAdminTeachers() {
 }
 
 function deleteTeacher(id) {
-  var t = getTeacher(id);
-  var relatedRegs = state.regs.filter(function(r) { return r.teacherId === id; });
-  var regIds = relatedRegs.map(function(r) { return r.id; });
-  var relatedEvals = state.evals.filter(function(e) { return regIds.indexOf(e.regId) >= 0; });
-  var relatedSubs = (state.submissions || []).filter(function(s) { return s.teacherId === id; });
-  var asSupervisorRegs = state.regs.filter(function(r) { return r.supervisorId === id && r.teacherId !== id; });
-  var totalRelated = relatedRegs.length + relatedEvals.length + relatedSubs.length;
-
-  var html = '<div class="alert alert-warning">คำเตือน: การลบครูจะลบข้อมูลที่ผูกกับครูคนนี้ทั้งหมดแบบถาวร และไม่สามารถกู้คืนได้</div>' +
-    '<div style="font-size:14px;margin-bottom:10px">ยืนยันการลบ <strong>' + escapeHtml(t.name) + '</strong>' + (t.subject ? ' (' + escapeHtml(t.subject) + ')' : '') + ' ออกจากระบบ' +
-    (totalRelated > 0 ? ' พร้อมข้อมูลที่เกี่ยวข้องดังนี้:' : ' — ไม่มีข้อมูลอื่นที่ผูกอยู่') + '</div>' +
-    (totalRelated > 0
-      ? '<ul style="font-size:13px;color:#3d4f70;line-height:1.9;margin:0 0 14px 20px;padding:0">' +
-          '<li>รายการลงทะเบียนนิเทศ: <strong>' + relatedRegs.length + '</strong> รายการ</li>' +
-          '<li>ผลการประเมิน: <strong>' + relatedEvals.length + '</strong> รายการ</li>' +
-          '<li>ไฟล์งานที่ส่ง: <strong>' + relatedSubs.length + '</strong> ไฟล์</li>' +
-        '</ul>'
-      : '') +
-    (asSupervisorRegs.length > 0
-      ? '<div class="alert alert-warning" style="margin-bottom:14px">ครูคนนี้เป็น <strong>ผู้นิเทศ</strong> อยู่ใน <strong>' + asSupervisorRegs.length + '</strong> รายการของครูคนอื่น รายการเหล่านั้นจะยังอยู่ครบ แต่ชื่อผู้นิเทศจะแสดงเป็น "(ไม่พบชื่อครู)" หลังลบ — แนะนำให้เปลี่ยนผู้นิเทศในรายการนั้นก่อน หากต้องการเก็บชื่อไว้</div>'
-      : '') +
-    '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">' +
-    '<button class="btn btn-ghost" onclick="closeModal()">ยกเลิก</button>' +
-    '<button class="btn btn-danger" onclick="confirmDeleteTeacher(\'' + id + '\')">ลบถาวร</button></div>';
-
-  openModal("ยืนยันการลบครูออกจากระบบ", html);
-}
-
-function confirmDeleteTeacher(id) {
-  closeModal();
-  var regIds = state.regs.filter(function(r) { return r.teacherId === id; }).map(function(r) { return r.id; });
-  state.regs = state.regs.filter(function(r) { return r.teacherId !== id; });
-  state.evals = state.evals.filter(function(e) { return regIds.indexOf(e.regId) < 0; });
-  state.submissions = (state.submissions || []).filter(function(s) { return s.teacherId !== id; });
+  if (!confirm("ลบครูคนนี้ออกจากระบบ?")) return;
   state.teachers = state.teachers.filter(function(t) { return t.id !== id; });
-
   renderAdminTeachers();
   renderDashboard();
-  if (document.getElementById("admin-submission-body")) renderAdminSubmissions();
-
-  pushSemesterToFirebase("ลบรายชื่อครูและข้อมูลที่เกี่ยวข้องทั้งหมดแล้ว", ["teachers", "regs", "evals", "submissions"]);
+  deleteRecordFromFirebase("teachers", id, "ลบรายชื่อครูแล้ว");
 }
-
 
 function copyTeachersFromPrevYear() {
   var prevYear = state.semesterYear - 1;
@@ -2571,7 +2308,7 @@ function copyTeachersFromPrevYear() {
     }
     var copied = JSON.parse(JSON.stringify(data.teachers));
     copied.forEach(function(t) { t.id = uid(); });
-    state.teachers = sortTeachers(copied);
+    state.teachers = copied;
     renderAdminTeachers();
     renderDashboard();
     pushSemesterToFirebase("คัดลอกรายชื่อ " + copied.length + " คน จากปีการศึกษา " + prevYear + " สำเร็จ", ["teachers"]);
@@ -2601,7 +2338,6 @@ function submitTeacher() {
   if (!name || !subject) { showToast("กรุณากรอกชื่อและกลุ่มสาระ", true); return; }
   var newTeacher = {id: uid(), name: name, subject: subject, room: room};
   state.teachers.push(newTeacher);
-  state.teachers = sortTeachers(state.teachers);
   closeModal();
   renderAdminTeachers();
   renderDashboard();
