@@ -2845,6 +2845,472 @@ function downloadStyledExcel(filename, sheets) {
 // ======================================================
 // INIT
 // ======================================================
+// ============================================================
+// PATCH v2 — วางบล็อกนี้ทั้งก้อน "ก่อน" บรรทัด INIT ท้ายไฟล์:
+//   updateSemesterLabel();
+//   renderDashboard();
+//   initFirebaseSync();
+// ไม่ต้องลบหรือแก้โค้ดเดิม (บล็อกนี้เขียนทับฟังก์ชันเดิมให้เอง)
+// ============================================================
+
+// ---------- ตารางคาบเรียนใหม่ (คาบ 0-9) ----------
+PERIOD_SLOTS = [
+  {period: "คาบที่ 0", time: "07.40-08.30"},
+  {period: "คาบที่ 1", time: "08.30-09.20"},
+  {period: "คาบที่ 2", time: "09.20-10.10"},
+  {period: "คาบที่ 3", time: "10.10-11.00"},
+  {period: "คาบที่ 4", time: "11.00-11.50"},
+  {period: "คาบที่ 5", time: "11.50-12.40"},
+  {period: "คาบที่ 6", time: "12.40-13.30"},
+  {period: "คาบที่ 7", time: "13.30-14.20"},
+  {period: "คาบที่ 8", time: "14.20-15.10"},
+  {period: "คาบที่ 9", time: "15.10-16.00"}
+];
+
+// ---------- ครู: สถานะ "ย้ายออก" ----------
+function isLeft(t) { return !!t && t.status === "left"; }
+function activeTeachers() { return state.teachers.filter(function(t) { return !isLeft(t); }); }
+function ea(v) { return escapeHtml(v).replace(/"/g, "&quot;"); }
+
+getTeacher = function(id) {
+  var t = state.teachers.find(function(x) { return x.id === id; });
+  if (!t) return {name: id, subject: "", room: ""};
+  if (isLeft(t)) return {id: t.id, name: t.name + " (ย้ายออก)", subject: t.subject, room: t.room, status: "left"};
+  return t;
+};
+
+// รายชื่อในช่องค้นหาแสดงเฉพาะครูที่ยังอยู่
+filterTeacherAc = function(inputId, hiddenId, listId) {
+  var input = document.getElementById(inputId), listEl = document.getElementById(listId), hidden = document.getElementById(hiddenId);
+  if (!input || !listEl) return;
+  var q = input.value.trim().toLowerCase();
+  var matches = activeTeachers().filter(function(t) { return !q || t.name.toLowerCase().indexOf(q) >= 0; });
+  listEl.innerHTML = matches.length ? matches.map(function(t) {
+    return '<div class="ac-item" onmousedown="selectTeacherAc(\'' + inputId + '\',\'' + hiddenId + '\',\'' + listId + '\',\'' + t.id + '\')">' +
+      highlightMatch(t.name, q) + ' <span style="color:#6b7a99;font-size:11px">— ' + escapeHtml(t.subject) + '</span></div>';
+  }).join("") : '<div class="ac-empty">ไม่พบชื่อครูที่ตรงกัน</div>';
+  listEl.style.display = "block";
+  if (hidden) {
+    var ex = state.teachers.find(function(t) { return t.name === input.value.trim(); });
+    hidden.value = ex ? ex.id : "";
+  }
+};
+selectTeacherAc = function(inputId, hiddenId, listId, teacherId) {
+  var t = state.teachers.find(function(x) { return x.id === teacherId; });
+  if (!t) return;
+  document.getElementById(inputId).value = t.name;
+  document.getElementById(hiddenId).value = teacherId;
+  var l = document.getElementById(listId); if (l) l.style.display = "none";
+};
+
+// หน้าจัดการครู
+(function() {
+  var tb = document.getElementById("admin-teacher-body");
+  if (tb) tb.parentNode.querySelector("thead tr").innerHTML =
+    '<th>#</th><th>ชื่อ-สกุล</th><th>กลุ่มสาระ</th><th>ห้องเรียน</th><th>สถานะ</th><th>จัดการ</th>';
+})();
+
+renderAdminTeachers = function() {
+  var searchEl = document.getElementById("admin-teacher-search");
+  var q = searchEl ? searchEl.value.trim().toLowerCase() : "";
+  var list = q ? state.teachers.filter(function(t) { return t.name && t.name.toLowerCase().indexOf(q) >= 0; }) : state.teachers;
+  var html = "";
+  list.forEach(function(t, i) {
+    var left = isLeft(t);
+    var used = state.regs.some(function(r) { return r.teacherId === t.id || r.supervisorId === t.id; }) ||
+               (state.submissions || []).some(function(s) { return s.teacherId === t.id; });
+    html += '<tr' + (left ? ' style="opacity:.6"' : '') + '><td>' + (i + 1) + '</td><td><strong>' + highlightMatch(t.name, q) + '</strong></td>' +
+      '<td>' + escapeHtml(t.subject) + '</td><td>' + escapeHtml(t.room) + '</td>' +
+      '<td>' + (left ? '<span class="badge b-gray">ย้ายออก' + (t.leftDate ? ' ' + thDate(t.leftDate) : '') + '</span>' : '<span class="badge b-green">ปฏิบัติงาน</span>') + '</td><td>' +
+      (left
+        ? '<button class="btn btn-ghost btn-xs" onclick="setTeacherLeft(\'' + t.id + '\',false)">กลับเข้า</button>'
+        : '<button class="btn btn-outline btn-xs" onclick="setTeacherLeft(\'' + t.id + '\',true)">ย้ายออก</button>') +
+      (used ? '' : ' <button class="btn btn-danger btn-xs" onclick="deleteTeacher(\'' + t.id + '\')">&#x1F5D1;</button>') +
+      '</td></tr>';
+  });
+  document.getElementById("admin-teacher-body").innerHTML = html;
+  var copyBtn = document.getElementById("copy-teachers-btn");
+  if (copyBtn) {
+    copyBtn.style.display = "";
+    copyBtn.onclick = importMissingTeachers;
+    copyBtn.textContent = state.semesterTerm === 2 ? "นำเข้าครูที่ยังไม่มีจากภาคเรียน 1" : "นำเข้าครูที่ยังไม่มีจากปี " + (state.semesterYear - 1);
+  }
+};
+
+function setTeacherLeft(id, left) {
+  var t = state.teachers.find(function(x) { return x.id === id; });
+  if (!t) return;
+  var msg = left
+    ? "ตั้ง <strong>" + escapeHtml(t.name) + "</strong> เป็น \"ย้ายออก\" ใช่ไหม?<br><span style=\"font-size:12px;color:#6b7a99\">ประวัติเดิมยังอยู่ แต่จะไม่นับในเปอร์เซ็นต์ภาคเรียนนี้</span>"
+    : "ให้ <strong>" + escapeHtml(t.name) + "</strong> กลับเข้าเป็นครูที่ปฏิบัติงาน ใช่ไหม?";
+  askConfirm(msg, function() { doSetTeacherLeft(id, left); }, {title: left ? "ยืนยันการย้ายออก" : "ยืนยันการกลับเข้า", yes: left ? "ยืนยันย้ายออก" : "ยืนยัน"});
+}
+
+function doSetTeacherLeft(id, left) {
+  var t = state.teachers.find(function(x) { return x.id === id; });
+  if (!t) return;
+  if (left) { t.status = "left"; t.leftDate = new Date().toISOString().slice(0, 10); }
+  else { delete t.status; delete t.leftDate; }
+  renderAdminTeachers(); renderDashboard();
+  saveRecordToFirebase("teachers", t, left ? "ตั้งสถานะย้ายออกแล้ว" : "กลับเข้าปฏิบัติงานแล้ว");
+}
+
+// ลบได้เฉพาะครูที่ยังไม่มีรายการใดๆ (เช่น เพิ่มผิด)
+deleteTeacher = function(id) {
+  var t = state.teachers.find(function(x) { return x.id === id; });
+  if (!t) return;
+  askConfirm("ลบ <strong>" + escapeHtml(t.name) + "</strong> ออกจากระบบถาวร?<br><span style=\"font-size:12px;color:#6b7a99\">ใช้เฉพาะกรณีเพิ่มผิด</span>", function() {
+    state.teachers = state.teachers.filter(function(x) { return x.id !== id; });
+    renderAdminTeachers(); renderDashboard();
+    deleteRecordFromFirebase("teachers", id, "ลบรายชื่อครูแล้ว");
+  }, {title: "ยืนยันการลบ", yes: "ลบ", danger: true});
+};
+
+// นำเข้าเฉพาะครูที่ "ยังไม่มีชื่อ" ในภาคเรียนนี้ ไม่ทับรายชื่อเดิม
+function importMissingTeachers() {
+  var srcKey = state.semesterTerm === 2 ? semesterKey(1, state.semesterYear) : semesterKey(1, state.semesterYear - 1);
+  showToast("กำลังโหลดรายชื่อจาก " + srcKey + "...");
+  dbRoot.child("semesters").child(srcKey).child("teachers").once("value").then(function(snap) {
+    var src = normalizeField(snap.val()).filter(function(t) { return !isLeft(t); });
+    if (!src.length) { showToast("ไม่พบรายชื่อครูใน " + srcKey, true); return; }
+    var have = {};
+    state.teachers.forEach(function(t) { have[(t.name || "").trim()] = true; });
+    var added = [];
+    src.forEach(function(t) {
+      if (have[(t.name || "").trim()]) return;
+      added.push({id: uid(), name: t.name, subject: t.subject, room: t.room || ""});
+    });
+    if (!added.length) { showToast("รายชื่อครบแล้ว ไม่มีครูใหม่ให้นำเข้า"); return; }
+    added.forEach(function(n) { state.teachers.push(n); });
+    renderAdminTeachers(); renderDashboard();
+    added.forEach(function(n, i) {
+      saveRecordToFirebase("teachers", n, i === added.length - 1 ? "นำเข้าครู " + added.length + " คนสำเร็จ" : null);
+    });
+  }).catch(function(err) { console.error(err); showToast("โหลดข้อมูลไม่สำเร็จ", true); });
+}
+
+// ---------- เปอร์เซ็นต์: นับ "จำนวนครูที่ไม่ซ้ำ" เทียบครูที่ปฏิบัติงานในภาคเรียนนี้ ----------
+function countProgress(list) {
+  var ids = {}, r1 = {}, r2 = {}, e1 = {}, e2 = {};
+  list.forEach(function(t) { ids[t.id] = true; });
+  state.regs.forEach(function(x) {
+    if (!ids[x.teacherId]) return;
+    if (x.round === 1) r1[x.teacherId] = 1;
+    if (x.round === 2) r2[x.teacherId] = 1;
+  });
+  state.evals.forEach(function(e) {
+    var g = getReg(e.regId);
+    if (!g || !ids[g.teacherId]) return;
+    if (g.round === 1) e1[g.teacherId] = 1;
+    if (g.round === 2) e2[g.teacherId] = 1;
+  });
+  return {n: list.length, r1: Object.keys(r1).length, r2: Object.keys(r2).length, e1: Object.keys(e1).length, e2: Object.keys(e2).length};
+}
+
+renderDonut = function() {
+  var c = countProgress(activeTeachers());
+  var total = c.n * 4, done = c.r1 + c.r2 + c.e1 + c.e2;
+  var pct = total > 0 ? Math.round(done / total * 100) : 0;
+  var html = '<div style="position:relative;width:100px;height:100px;flex-shrink:0"><svg width="100" height="100" viewBox="0 0 36 36" style="transform:rotate(-90deg)">' +
+    '<circle cx="18" cy="18" r="15.9" fill="none" stroke="#e8eaf0" stroke-width="4"/>' +
+    '<circle cx="18" cy="18" r="15.9" fill="none" stroke="#1e3a5f" stroke-width="4" stroke-dasharray="' + pct + ' ' + (100 - pct) + '"/></svg>' +
+    '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column">' +
+    '<span style="font-family:Kanit,sans-serif;font-size:20px;font-weight:700;color:#0f2540">' + pct + '%</span>' +
+    '<span style="font-size:10px;color:#6b7a99">ครู ' + c.n + ' คน</span></div></div><div style="flex:1">';
+  [["ลงทะเบียนครั้ง 1", c.r1, "#1e3a5f"], ["ลงทะเบียนครั้ง 2", c.r2, "#0f2540"], ["ประเมินครั้ง 1", c.e1, "#2eaa6e"], ["ประเมินครั้ง 2", c.e2, "#e87820"]].forEach(function(it) {
+    var p = c.n > 0 ? Math.round(it[1] / c.n * 100) : 0;
+    html += '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><span style="color:#6b7a99">' + it[0] +
+      '</span><span style="font-weight:700;color:#0f2540">' + p + '%</span></div><div class="prog-bar"><div class="prog-fill" style="width:' + p + '%;background:' + it[2] + '"></div></div></div>';
+  });
+  document.getElementById("donut-wrap").innerHTML = html + '</div>';
+};
+
+renderSubjectTable = function() {
+  var html = "";
+  SUBJECTS.forEach(function(sub) {
+    var list = activeTeachers().filter(function(t) { return t.subject === sub; });
+    if (!list.length) return;
+    var c = countProgress(list), n = c.n;
+    html += '<tr><td style="font-weight:600;color:#0f2540;font-size:12px">' + sub + ' <span style="color:#6b7a99;font-weight:400">(' + n + ')</span></td>' +
+      '<td>' + pctBar(Math.round(c.r1 / n * 100), "#1e3a5f") + '</td><td>' + pctBar(Math.round(c.r2 / n * 100), "#0f2540") + '</td>' +
+      '<td>' + pctBar(Math.round(c.e1 / n * 100), "#2eaa6e") + '</td><td>' + pctBar(Math.round(c.e2 / n * 100), "#e87820") + '</td></tr>';
+  });
+  document.getElementById("subject-table").innerHTML = html;
+};
+
+// ---------- สรุปผล: แท็บภาพรวมกลุ่มสาระ (นับใหม่) + แท็บค่าเฉลี่ยรายด้าน ----------
+(function() {
+  var b = document.getElementById("stab-subject");
+  if (b) b.insertAdjacentHTML("afterend", '<button class="tab-btn" id="stab-dim" onclick="showSummaryTab(\'dim\')">ค่าเฉลี่ยรายด้าน</button>');
+  var bi = document.getElementById("stab-individual");
+  if (bi) bi.textContent = "รายบุคคล";
+  if (b) b.textContent = "ภาพรวมกลุ่มสาระ";
+  var s = document.getElementById("summary-subject");
+  if (s) s.insertAdjacentHTML("afterend", '<div id="summary-dim" style="display:none"></div>');
+})();
+
+showSummaryTab = function(tab) {
+  state.summaryTab = tab;
+  ["individual", "subject", "dim"].forEach(function(t) {
+    document.getElementById("stab-" + t).className = "tab-btn" + (t === tab ? " active" : "");
+    document.getElementById("summary-" + t).style.display = t === tab ? "" : "none";
+  });
+  if (tab === "dim") renderDimensionCharts("summary-dim");
+};
+
+var _origRenderSummary = renderSummary;
+renderSummary = function() {
+  _origRenderSummary();
+  var h = '<div class="card"><div style="overflow-x:auto"><table><thead><tr><th>กลุ่มสาระ</th><th>ครู</th><th>ลงทะเบียน 1</th><th>ลงทะเบียน 2</th><th>ประเมิน 1</th><th>ประเมิน 2</th></tr></thead><tbody>';
+  SUBJECTS.forEach(function(sub) {
+    var list = activeTeachers().filter(function(t) { return t.subject === sub; });
+    if (!list.length) return;
+    var c = countProgress(list), n = c.n;
+    h += '<tr><td style="font-weight:600;color:#0f2540">' + sub + '</td><td>' + n + '</td>' +
+      '<td>' + pctBar(Math.round(c.r1 / n * 100), "#1e3a5f") + '</td><td>' + pctBar(Math.round(c.r2 / n * 100), "#0f2540") + '</td>' +
+      '<td>' + pctBar(Math.round(c.e1 / n * 100), "#2eaa6e") + '</td><td>' + pctBar(Math.round(c.e2 / n * 100), "#e87820") + '</td></tr>';
+  });
+  document.getElementById("summary-subject").innerHTML = h + '</tbody></table></div></div>';
+  if (state.summaryTab === "dim") renderDimensionCharts("summary-dim");
+};
+
+// ค่าเฉลี่ยรายด้าน แยกกลุ่มสาระ (เป็นร้อยละของคะแนนเต็ม)
+var DIMENSIONS = [
+  {key: "t", label: "ด้านที่ 1 การจัดการเรียนรู้ (ครูผู้สอน)", color: "#3b7dd8", field: "tScores"},
+  {key: "s", label: "ด้านที่ 2 ผู้เรียน", color: "#4cb37c", field: "sScores"},
+  {key: "p", label: "ด้านที่ 3 คุณภาพแผนการจัดการเรียนรู้", color: "#a66fc9", field: "pScores"},
+  {key: "i", label: "ด้านที่ 4 ความสอดคล้องของแผน (IOC)", color: "#e87820", field: "iScores"}
+];
+function dimensionPercent(dim, list) {
+  var ids = {}, vals = [];
+  list.forEach(function(t) { ids[t.id] = true; });
+  state.evals.forEach(function(ev) {
+    var g = getReg(ev.regId), arr = ev[dim.field] || [];
+    if (!g || !ids[g.teacherId] || !arr.length) return;
+    if (dim.key === "i") vals.push(((arr.reduce(function(a, b) { return a + b; }, 0) / arr.length + 1) / 2) * 100); // -1..1 -> 0..100
+    else vals.push(avg(arr) / 5 * 100);
+  });
+  if (!vals.length) return null;
+  return Math.round(vals.reduce(function(a, b) { return a + b; }, 0) / vals.length * 10) / 10;
+}
+function renderDimensionCharts(targetId) {
+  var el = document.getElementById(targetId);
+  if (!el) return;
+  var subs = SUBJECTS.filter(function(s) { return state.teachers.some(function(t) { return t.subject === s; }); });
+  var html = '<div class="alert alert-info">ค่าเฉลี่ยเป็นร้อยละของคะแนนเต็ม (คะแนน 1-5 → %, IOC -1..1 → 0-100%) เฉพาะผู้ที่ประเมินแล้วในภาคเรียนนี้</div>';
+  DIMENSIONS.forEach(function(dim) {
+    var vals = subs.map(function(s) { return dimensionPercent(dim, state.teachers.filter(function(t) { return t.subject === s; })); });
+    html += '<div class="card"><div class="card-h"><span class="card-title">' + dim.label + '</span><span class="badge b-navy">คะแนนเฉลี่ย (%)</span></div><div class="card-body" style="overflow-x:auto">' +
+      '<div style="display:flex;align-items:flex-end;gap:10px;height:170px;border-bottom:1px solid #dde3ee;min-width:' + subs.length * 74 + 'px">';
+    vals.forEach(function(v) {
+      html += '<div style="flex:1;text-align:center"><div style="font-size:12px;font-weight:700;color:#0f2540;margin-bottom:2px">' + (v === null ? "-" : v) +
+        '</div><div style="height:' + (v === null ? 0 : Math.round(v * 1.4)) + 'px;background:' + dim.color + ';border-radius:6px 6px 0 0"></div></div>';
+    });
+    html += '</div><div style="display:flex;gap:10px;margin-top:6px;min-width:' + subs.length * 74 + 'px">';
+    subs.forEach(function(s) { html += '<div style="flex:1;text-align:center;font-size:10px;color:#6b7a99;line-height:1.3">' + escapeHtml(s) + '</div>'; });
+    html += '</div></div></div>';
+  });
+  el.innerHTML = html;
+}
+
+// พิมพ์ทั้งหมด: ข้ามครูที่ย้ายออกและไม่มีข้อมูล
+printAllTeacherReports = function() {
+  var list = state.teachers.filter(function(t) {
+    return !isLeft(t) || state.regs.some(function(r) { return r.teacherId === t.id; });
+  });
+  if (!list.length) { showToast("ยังไม่มีรายชื่อครูให้พิมพ์รายงาน", true); return; }
+  var el = document.getElementById("print-report");
+  el.innerHTML = list.map(function(t) { return buildTeacherReportHtml(t.id, true); }).join("");
+  waitForPrintImages(el, 8000).then(function() { window.print(); });
+};
+
+// ---------- ลงทะเบียน: ทุกคนแก้ไขได้ (มี confirm) ----------
+renderRegList = function(round) {
+  var gv = function(s) { var e = document.getElementById("reg" + round + "-" + s); return e ? e.value.trim().toLowerCase() : ""; };
+  var q = gv("search"), sf = (document.getElementById("reg" + round + "-status") || {}).value || "", sj = gv("subject");
+  var list = state.regs.filter(function(r) { return r.round === round; });
+  if (q) list = list.filter(function(r) {
+    return (getTeacher(r.teacherId).name || "").toLowerCase().indexOf(q) >= 0 || (getTeacher(r.supervisorId).name || "").toLowerCase().indexOf(q) >= 0;
+  });
+  if (sf) list = list.filter(function(r) { return r.status === sf; });
+  if (sj) list = list.filter(function(r) { return (getTeacher(r.teacherId).subject || "").toLowerCase().indexOf(sj) >= 0; });
+  document.getElementById("reg" + round + "-count").textContent = list.length + " รายการ";
+  var th = document.getElementById("reg" + round + "-admin-th"); th.style.display = ""; th.textContent = "จัดการ";
+  var miss = '<span style="color:#c0392b">- ไม่ได้ระบุ -</span>';
+  var html = "";
+  if (!list.length) html = '<tr><td colspan="9" style="text-align:center;color:#6b7a99;padding:20px">ยังไม่มีรายการ</td></tr>';
+  list.forEach(function(r) {
+    var t = getTeacher(r.teacherId), sup = getTeacher(r.supervisorId);
+    var plan = '<div style="max-width:240px;font-size:11px;line-height:1.5">' +
+      '<div><span style="color:#6b7a99;font-weight:700">หัวข้อ:</span> ' + (r.improveTopic ? escapeHtml(r.improveTopic) : miss) + '</div>' +
+      '<div style="margin-top:3px"><span style="color:#6b7a99;font-weight:700">มาตรฐาน/ตัวชี้วัด:</span> ' + (r.standard ? escapeHtml(r.standard) : miss) + '</div>' +
+      '<div style="margin-top:3px"><span style="color:#6b7a99;font-weight:700">แนวทางแก้ไข:</span> ' + (r.solution ? escapeHtml(r.solution) : miss) + '</div></div>';
+    html += '<tr><td><strong>' + highlightMatch(t.name, q) + '</strong></td><td>' + highlightMatch(t.subject, sj) + '</td><td>' + highlightMatch(sup.name, q) + '</td>' +
+      '<td><div style="font-size:12px">' + escapeHtml(r.subject) + '</div><div style="font-size:11px;color:#6b7a99">' + escapeHtml(r.level) + ' ห้อง ' + escapeHtml(r.room) + '</div></td>' +
+      '<td>' + thDate(r.date) + '</td><td>' + escapeHtml(r.time) + '<br><span style="font-size:11px;color:#6b7a99">' + escapeHtml(r.period) + '</span></td>' +
+      '<td>' + plan + '</td><td><span class="badge ' + statusClass(r.status) + '">' + r.status + '</span></td><td style="white-space:nowrap">' +
+      '<button class="btn btn-ghost btn-xs" onclick="openEditReg(\'' + r.id + '\',' + round + ')">แก้ไข</button>';
+    if (state.adminLoggedIn) {
+      if (r.status === "รอดำเนินการ") html += ' <button class="btn btn-ghost btn-xs" onclick="confirmReg(\'' + r.id + '\',' + round + ')">&#x2713;</button>';
+      html += ' <button class="btn btn-danger btn-xs" onclick="deleteReg(\'' + r.id + '\',' + round + ')">&#x1F5D1;</button>';
+    }
+    html += '</td></tr>';
+  });
+  document.getElementById("reg" + round + "-body").innerHTML = html;
+};
+
+// ป๊อปอัปยืนยันในหน้าเว็บ (แทน confirm ของเบราว์เซอร์)
+function askConfirm(msg, onYes, opts) {
+  opts = opts || {};
+  window._confirmYes = onYes;
+  openModal(opts.title || "ยืนยันการแก้ไข",
+    '<div style="text-align:center;font-size:14px;line-height:1.6;margin:6px 0 20px">' + msg + '</div>' +
+    '<div style="display:flex;gap:8px"><button class="btn btn-ghost" style="flex:1;justify-content:center" onclick="closeModal()">ยกเลิก</button>' +
+    '<button class="btn ' + (opts.danger ? 'btn-danger' : 'btn-primary') + '" style="flex:1;justify-content:center" onclick="var f=window._confirmYes;closeModal();if(f)f()">' + (opts.yes || "ยืนยันแก้ไข") + '</button></div>');
+}
+
+function openEditReg(id, round) {
+  var r = getReg(id);
+  if (!r) return;
+  askConfirm("ต้องการแก้ไขรายการนิเทศของ<br><strong>" + escapeHtml(getTeacher(r.teacherId).name) + "</strong> ใช่ไหม?", function() { openEditRegForm(id, round); });
+}
+
+function openEditRegForm(id, round) {
+  var r = getReg(id);
+  if (!r) return;
+  var levelOpts = LEVELS.map(function(l) { return '<option' + (l === r.level ? ' selected' : '') + '>' + l + '</option>'; }).join("");
+  var periodOpts = PERIOD_SLOTS.map(function(p, i) {
+    return '<option value="' + i + '"' + (p.period === r.period ? ' selected' : '') + '>' + p.period + ' (' + p.time + ')</option>';
+  }).join("");
+  openModal("แก้ไขการลงทะเบียนนิเทศครั้งที่ " + round,
+    '<div class="form-grid">' +
+    teacherAutocompleteHtml("rf-teacher-input", "rf-teacher", "rf-teacher-list", "ครูผู้สอน", true) +
+    teacherAutocompleteHtml("rf-sup-input", "rf-sup", "rf-sup-list", "ผู้นิเทศ", true) +
+    '<div class="form-group"><label class="form-label">วิชา *</label><input class="form-input" id="rf-subject" value="' + ea(r.subject) + '"></div>' +
+    '<div class="form-group"><label class="form-label">ระดับชั้น *</label><select class="form-select" id="rf-level">' + levelOpts + '</select></div>' +
+    '<div class="form-group"><label class="form-label">วันที่ *</label><input class="form-input" type="date" id="rf-date" value="' + ea(r.date || "") + '"></div>' +
+    '<div class="form-group"><label class="form-label">คาบ/เวลา *</label><select class="form-select" id="rf-slot">' + periodOpts + '</select></div>' +
+    '<div class="form-group"><label class="form-label">ห้องเรียน</label><input class="form-input" id="rf-room" value="' + ea(r.room || "") + '"></div>' +
+    '<div class="form-group form-full"><label class="form-label">หัวข้อในการปรับปรุง *</label><textarea class="form-textarea" id="rf-improve">' + escapeHtml(r.improveTopic || "") + '</textarea></div>' +
+    '<div class="form-group form-full"><label class="form-label">มาตรฐานและตัวชี้วัด *</label><textarea class="form-textarea" id="rf-standard">' + escapeHtml(r.standard || "") + '</textarea></div>' +
+    '<div class="form-group form-full"><label class="form-label">แนวทางแก้ไข *</label><textarea class="form-textarea" id="rf-solution">' + escapeHtml(r.solution || "") + '</textarea></div></div>' +
+    '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px"><button class="btn btn-ghost" onclick="closeModal()">ยกเลิก</button>' +
+    '<button class="btn btn-primary" onclick="submitEditReg(\'' + id + '\',' + round + ')">บันทึก</button></div>', true);
+  selectTeacherAc("rf-teacher-input", "rf-teacher", "rf-teacher-list", r.teacherId);
+  selectTeacherAc("rf-sup-input", "rf-sup", "rf-sup-list", r.supervisorId);
+}
+
+function submitEditReg(id, round) {
+  var r = getReg(id);
+  if (!r) return;
+  var v = function(i) { return document.getElementById(i).value.trim(); };
+  var teacherId = v("rf-teacher"), supId = v("rf-sup"), date = fixDateYear(v("rf-date")), slotIdx = v("rf-slot");
+  if (!teacherId || !supId || !v("rf-subject") || !v("rf-level") || !date || slotIdx === "" || !v("rf-improve") || !v("rf-standard") || !v("rf-solution")) {
+    showToast("กรุณากรอกข้อมูลให้ครบทุกช่อง", true); return;
+  }
+  var slot = PERIOD_SLOTS[parseInt(slotIdx, 10)];
+  r.teacherId = teacherId; r.supervisorId = supId; r.subject = v("rf-subject"); r.level = v("rf-level");
+  r.date = date; r.time = slot.time; r.period = slot.period; r.room = v("rf-room");
+  r.improveTopic = v("rf-improve"); r.standard = v("rf-standard"); r.solution = v("rf-solution");
+  closeModal(); renderRegList(round); renderDashboard();
+  saveRecordToFirebase("regs", r, "แก้ไขการลงทะเบียนสำเร็จ");
+}
+
+// ---------- ผลประเมิน: ปุ่มแก้ไข (มี confirm) ----------
+var editingEvalId = null;
+closeModal = function() { document.getElementById("modal").style.display = "none"; editingEvalId = null; };
+
+var _origRenderEvalList = renderEvalList;
+renderEvalList = function(round) {
+  _origRenderEvalList(round);
+  document.querySelectorAll('#eval' + round + '-body button[onclick^="viewEval("]').forEach(function(b) {
+    var id = b.getAttribute("onclick").match(/'([^']+)'/)[1];
+    b.insertAdjacentHTML("afterend", ' <button class="btn btn-ghost btn-xs" onclick="openEditEval(\'' + id + '\')">แก้ไข</button>');
+  });
+};
+
+function openEditEval(evId) {
+  var ev = state.evals.find(function(e) { return e.id === evId; });
+  var reg = ev && getReg(ev.regId);
+  if (!reg) return;
+  askConfirm("ต้องการแก้ไขผลประเมินของ<br><strong>" + escapeHtml(getTeacher(reg.teacherId).name) + "</strong> ใช่ไหม?", function() { openEditEvalForm(evId); });
+}
+
+function openEditEvalForm(evId) {
+  var ev = state.evals.find(function(e) { return e.id === evId; });
+  if (!ev) return;
+  var reg = getReg(ev.regId);
+  if (!reg) return;
+  resetEvalState();
+  editingEvalId = evId;
+  evalState.regId = ev.regId;
+  evalState.tScores = ev.tScores.slice(); evalState.sScores = ev.sScores.slice();
+  evalState.pScores = ev.pScores.slice(); evalState.iScores = ev.iScores.slice();
+  evalState.tStrength = ev.tStrength || ""; evalState.tImprove = ev.tImprove || "";
+  evalState.sAtmo = ev.sAtmo || ""; evalState.pStrength = ev.pStrength || ""; evalState.pImprove = ev.pImprove || "";
+  evalState.photos = (ev.photos || []).map(function(p) { return {name: p.name, url: p.url || p.data, previewUrl: null, status: "done"}; });
+  openModal("แก้ไขผลประเมินครั้งที่ " + reg.round,
+    '<div class="alert alert-info">' + escapeHtml(evalRegLabel(reg)) + '</div><input type="hidden" id="ef-reg" value="' + ev.regId + '">' +
+    '<div class="tabs">' +
+    '<button class="tab-btn active" id="etab-teacher" onclick="switchEvalTab(\'teacher\')">ประเมินครู (14)</button>' +
+    '<button class="tab-btn" id="etab-student" onclick="switchEvalTab(\'student\')">ผู้เรียน (6)</button>' +
+    '<button class="tab-btn" id="etab-plan" onclick="switchEvalTab(\'plan\')">คุณภาพแผน (10)</button>' +
+    '<button class="tab-btn" id="etab-ioc" onclick="switchEvalTab(\'ioc\')">IOC (10)</button>' +
+    '<button class="tab-btn" id="etab-photos" onclick="switchEvalTab(\'photos\')">ภาพการนิเทศ</button></div>' +
+    '<div id="eval-tab-content"></div>' +
+    '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn btn-ghost" onclick="closeModal()">ยกเลิก</button>' +
+    '<button class="btn btn-success" onclick="submitEditEval()">บันทึกการแก้ไข</button></div>', true);
+  switchEvalTab("teacher");
+}
+
+function submitEditEval() {
+  saveEvalTabData();
+  var ev = state.evals.find(function(e) { return e.id === editingEvalId; });
+  if (!ev) return;
+  var ok = evalState.tScores.every(function(s) { return s !== 0; }) && evalState.sScores.every(function(s) { return s !== 0; }) &&
+           evalState.pScores.every(function(s) { return s !== 0; });
+  if (!ok) { showToast("กรุณาให้คะแนนให้ครบทุกข้อ", true); return; }
+  if (evalState.photosUploading > 0) { showToast("กรุณารอให้รูปภาพอัปโหลดเสร็จก่อนบันทึก", true); return; }
+  ev.tScores = evalState.tScores.slice(); ev.sScores = evalState.sScores.slice();
+  ev.pScores = evalState.pScores.slice(); ev.iScores = evalState.iScores.slice();
+  ev.tStrength = evalState.tStrength; ev.tImprove = evalState.tImprove;
+  ev.sAtmo = evalState.sAtmo; ev.pStrength = evalState.pStrength; ev.pImprove = evalState.pImprove;
+  ev.photos = evalState.photos.filter(function(p) { return p.url; }).map(function(p) { return {name: p.name, url: p.url}; });
+  var round = (getReg(ev.regId) || {}).round || 1;
+  closeModal(); renderEvalList(round); renderDashboard();
+  saveRecordToFirebase("evals", ev, "แก้ไขผลประเมินสำเร็จ");
+}
+// ---------- Admin: ปรับเวลาของรายการเก่าตามตารางคาบใหม่ (ทั้งภาคเรียนที่เปิดอยู่) ----------
+function syncPeriodTimes() {
+  var changed = [];
+  state.regs.forEach(function(r) {
+    var s = PERIOD_SLOTS.find(function(p) { return p.period === r.period; });
+    if (s && s.time !== r.time) changed.push({r: r, t: s.time});
+  });
+  if (!changed.length) { showToast("เวลาทุกรายการตรงกับตารางใหม่แล้ว"); return; }
+  if (!confirm("ปรับเวลา " + changed.length + " รายการในภาคเรียนนี้ ให้ตรงกับตารางคาบใหม่ ใช่ไหม?")) return;
+  changed.forEach(function(c, i) {
+    c.r.time = c.t;
+    saveRecordToFirebase("regs", c.r, i === changed.length - 1 ? "ปรับเวลา " + changed.length + " รายการสำเร็จ" : null);
+  });
+  rerenderCurrentPage();
+}
+(function() {
+  var lo = document.querySelector("#page-admin .page-header button.btn-danger");
+  if (!lo) return;
+  var wrap = document.createElement("div");
+  wrap.style.cssText = "display:flex;gap:8px;flex-wrap:wrap";
+  var btn = document.createElement("button");
+  btn.className = "btn btn-ghost btn-sm";
+  btn.textContent = "ปรับเวลาตามตารางคาบใหม่";
+  btn.onclick = syncPeriodTimes;
+  lo.parentNode.insertBefore(wrap, lo);
+  wrap.appendChild(btn);
+  wrap.appendChild(lo);
+})();
+// ============================ END PATCH ============================
+
+
 updateSemesterLabel();
 renderDashboard();
 initFirebaseSync();
