@@ -3218,7 +3218,40 @@ function submitEditReg(id, round) {
 
 // ---------- ผลประเมิน: ปุ่มแก้ไข (มี confirm) ----------
 var editingEvalId = null;
-closeModal = function() { document.getElementById("modal").style.display = "none"; editingEvalId = null; };
+// ---------- ลบไฟล์รูปออกจาก Firebase Storage จริง ----------
+function deleteStorageUrl(url) {
+  if (!url || String(url).indexOf("firebasestorage") < 0) return;
+  try {
+    storage.refFromURL(url).delete().catch(function(err) {
+      if (!err || err.code !== "storage/object-not-found") console.error("Storage delete error:", err);
+    });
+  } catch (e) { console.error("Storage delete error:", e); }
+}
+// รูปนี้ถูกบันทึกอยู่ในผลประเมินแล้วหรือยัง
+function isPhotoUrlSaved(url) {
+  return state.evals.some(function(ev) { return (ev.photos || []).some(function(p) { return p.url === url; }); });
+}
+// กดลบรูป: รูปที่ยังไม่เคยบันทึก (เพิ่งอัปในหน้านี้) ลบจาก Storage ทันที
+// รูปที่บันทึกไว้แล้ว (หน้าแก้ไข) แค่เอาออกจากรายการ และจะลบจริงตอนกด "บันทึกการแก้ไข" สำเร็จ
+removeEvalPhoto = function(idx) {
+  var e = evalState.photos[idx];
+  if (!e) return;
+  if (e.status === "uploading") evalState.photosUploading = Math.max(0, evalState.photosUploading - 1);
+  if (e.previewUrl) URL.revokeObjectURL(e.previewUrl);
+  evalState.photos.splice(idx, 1);
+  if (e.url && !isPhotoUrlSaved(e.url)) deleteStorageUrl(e.url);
+  renderEvalPhotoPreview();
+};
+
+// ปิดหน้าต่างโดยไม่บันทึก: ลบรูปที่เพิ่งอัปแต่ไม่ได้ถูกบันทึกออกจาก Storage
+closeModal = function() {
+  document.getElementById("modal").style.display = "none";
+  editingEvalId = null;
+  if (typeof evalState !== "undefined" && evalState && evalState.photos && evalState.photos.length) {
+    evalState.photos.forEach(function(p) { if (p.url && !isPhotoUrlSaved(p.url)) deleteStorageUrl(p.url); });
+    evalState.photos = [];
+  }
+};
 
 var _origRenderEvalList = renderEvalList;
 renderEvalList = function(round) {
@@ -3275,10 +3308,18 @@ function submitEditEval() {
   ev.pScores = evalState.pScores.slice(); ev.iScores = evalState.iScores.slice();
   ev.tStrength = evalState.tStrength; ev.tImprove = evalState.tImprove;
   ev.sAtmo = evalState.sAtmo; ev.pStrength = evalState.pStrength; ev.pImprove = evalState.pImprove;
+  var oldUrls = (ev.photos || []).map(function(p) { return p.url; }).filter(Boolean);
   ev.photos = evalState.photos.filter(function(p) { return p.url; }).map(function(p) { return {name: p.name, url: p.url}; });
+  var keepUrls = ev.photos.map(function(p) { return p.url; });
   var round = (getReg(ev.regId) || {}).round || 1;
   closeModal(); renderEvalList(round); renderDashboard();
-  saveRecordToFirebase("evals", ev, "แก้ไขผลประเมินสำเร็จ");
+  // ลบไฟล์ของรูปที่ถูกเอาออก "หลังจากบันทึกขึ้นคลาวด์สำเร็จเท่านั้น"
+  trackSave(semesterFieldRef("evals").child(ev.id).set(ev), "แก้ไขผลประเมินสำเร็จ").then(function() {
+    oldUrls.forEach(function(u) { if (keepUrls.indexOf(u) < 0) deleteStorageUrl(u); });
+  }).catch(function(err) {
+    console.error("Firebase save error (evals):", err);
+    showToast("บันทึกขึ้นคลาวด์ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต (รูปที่ลบยังไม่ถูกลบจาก Storage)", true);
+  });
 }
 // ---------- Admin: ปรับเวลาของรายการเก่าตามตารางคาบใหม่ (ทั้งภาคเรียนที่เปิดอยู่) ----------
 function syncPeriodTimes() {
@@ -3338,8 +3379,9 @@ function uploadErrorText(err) {
   var c = (err && err.code) || "";
   if (c === "storage/unauthorized") return "ไม่มีสิทธิ์อัปโหลด (ตรวจสอบ Storage Rules ใน Firebase)";
   if (c === "storage/retry-limit-exceeded" || c === "storage/network-request-failed") return "อินเทอร์เน็ตมีปัญหา ลองใหม่อีกครั้ง";
-  if (c === "storage/quota-exceeded") return "พื้นที่ Storage เต็ม";
-  return (err && err.message) ? err.message : "ไม่ทราบสาเหตุ";
+  var sr = (err && err.serverResponse) ? " | " + String(err.serverResponse).replace(/\s+/g, " ").slice(0, 160) : "";
+  if (c === "storage/quota-exceeded") return "Firebase แจ้งว่าโควต้า Storage เกิน/ถูกจำกัด (storage/quota-exceeded) ตรวจแผนและการเรียกเก็บเงินของโปรเจกต์" + sr;
+  return ((err && err.message) ? err.message : "ไม่ทราบสาเหตุ") + (c ? " [" + c + "]" : "") + sr;
 }
 handleEvalPhotos = function(input) {
   var files = input.files ? Array.from(input.files) : [];
@@ -3357,6 +3399,8 @@ handleEvalPhotos = function(input) {
       return uploadFileToStorage(small, "evalPhotos/" + semesterKey(state.semesterTerm, state.semesterYear));
     }).then(function(res) {
       entry.url = res.url; entry.status = "done";
+      // ถ้าผู้ใช้กดลบรูปนี้ หรือปิดหน้าต่างไปก่อนที่อัปโหลดจะเสร็จ -> ลบไฟล์ที่เพิ่งอัปออกจาก Storage ทันที
+      if (evalState.photos.indexOf(entry) < 0) deleteStorageUrl(res.url);
     }).catch(function(err) {
       console.error("Eval photo upload error:", err);
       entry.status = "error";
