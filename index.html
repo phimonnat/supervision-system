@@ -2192,6 +2192,24 @@ function buildTeacherReportHtml(teacherId, pageBreak) {
 
   var photoSection1 = buildEvalPhotoSectionHtml("ภาพการนิเทศครั้งที่ 1", e1);
   var photoSection2 = buildEvalPhotoSectionHtml("ภาพการนิเทศครั้งที่ 2", e2);
+  // จุดเด่นที่พัฒนาขึ้นชัดเจน / จุดที่ควรเร่งพัฒนา (จากผลประเมินครั้งที่ 1 และ 2)
+  function sugLines(items) {
+    if (!items.length) return "&nbsp;";
+    return items.map(function(it) {
+      return '<div style="margin-bottom:3pt"><b>' + it.l + ':</b> ' + escapeHtml(it.t).replace(/\r?\n/g, "<br>") + '</div>';
+    }).join("");
+  }
+  var sugStrengths = [], sugImproves = [];
+  [[1, e1], [2, e2]].forEach(function(p) {
+    var ev = p[1];
+    if (!ev) return;
+    var rl = "ครั้งที่ " + p[0];
+    if (ev.tStrength && String(ev.tStrength).trim()) sugStrengths.push({l: rl + " (ครูผู้สอน)", t: ev.tStrength});
+    if (ev.pStrength && String(ev.pStrength).trim()) sugStrengths.push({l: rl + " (แผนฯ)", t: ev.pStrength});
+    if (ev.tImprove && String(ev.tImprove).trim()) sugImproves.push({l: rl + " (ครูผู้สอน)", t: ev.tImprove});
+    if (ev.pImprove && String(ev.pImprove).trim()) sugImproves.push({l: rl + " (แผนฯ)", t: ev.pImprove});
+  });
+  var sugRowsHtml = '<tr><td>' + sugLines(sugStrengths) + '</td><td>' + sugLines(sugImproves) + '</td></tr>';
 
   var html =
     '<div class="' + (pageBreak ? "pr-page" : "") + '">' +
@@ -2209,7 +2227,7 @@ function buildTeacherReportHtml(teacherId, pageBreak) {
     '<p class="pr-line">ผลการพัฒนาโดยรวม: ' + overallQuality + '</p>' +
     '<p style="margin:6pt 0 2pt;font-weight:700;font-size:10pt">ข้อเสนอแนะ</p>' +
     '<table class="pr-sign-table"><thead><tr><th>จุดเด่นที่พัฒนาขึ้นชัดเจน</th><th>จุดที่ควรเร่งพัฒนา</th></tr></thead>' +
-    '<tr><td>&nbsp;</td><td>&nbsp;</td></tr></table>' +
+    sugRowsHtml + '</table>' +
     photoSection1 + photoSection2 +
     '<div style="display:flex;justify-content:space-between;margin-top:14pt;font-size:9pt">' +
     '<div style="text-align:center">ลงชื่อ.................................... ผู้รับการนิเทศ<br>(' + escapeHtml(t.name) + ')<br>วันที่..................</div>' +
